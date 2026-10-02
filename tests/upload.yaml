@@ -1,0 +1,11 @@
+openapi: 3.1.0
+info:
+  title: QA Uploaded API
+  version: 1.0.0
+paths:
+  /status:
+    get:
+      summary: Upload preview works
+      responses:
+        '200':
+          description: OK

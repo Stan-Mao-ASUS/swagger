@@ -1,0 +1,30 @@
+{
+  "name": "swagger-yaml-workbench-stan",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "node scripts/build.mjs",
+    "dev": "node scripts/dev.mjs",
+    "test": "node --test tests/*.test.mjs",
+    "db:generate": "drizzle-kit generate"
+  },
+  "dependencies": {
+    "@auth/core": "^0.41.3",
+    "@auth/d1-adapter": "1.11.0",
+    "js-yaml": "^4.1.1",
+    "drizzle-orm": "^0.45.3"
+  },
+  "devDependencies": {
+    "drizzle-kit": "^0.31.4",
+    "esbuild": "^0.25.10",
+    "miniflare": "^4.20250927.0"
+  },
+  "overrides": {
+    "@auth/core": "$@auth/core",
+    "@esbuild-kit/core-utils": {
+      "esbuild": "^0.25.12"
+    },
+    "undici": "^7.29.1",
+    "sharp": "^0.35.4"
+  }
+}

@@ -1,4 +1,5 @@
 import { useRef, useState } from 'react';
+import { metadataPatch } from '../lib/document-metadata.js';
 import { Modal } from './Modal.jsx';
 export function DocumentEditDialog({ item, categories, onSave, onClose }) {
   const [name, setName] = useState(item.displayName || item.title);
@@ -6,7 +7,7 @@ export function DocumentEditDialog({ item, categories, onSave, onClose }) {
   const [busy, setBusy] = useState(false); const [error, setError] = useState(''); const pending = useRef(false);
   async function submit(event) {
     event.preventDefault(); if (pending.current) return; pending.current = true; setBusy(true); setError('');
-    try { await onSave(item.id, { displayName: name.trim(), categoryId: category || null }); onClose(); }
+    try { await onSave(item.id, metadataPatch(item, name, category)); onClose(); }
     catch (error) { setError(error.message); }
     finally { pending.current = false; setBusy(false); }
   }

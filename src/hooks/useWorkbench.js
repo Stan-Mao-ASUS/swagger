@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { example } from '../example.js';
 import { api } from '../lib/api.js';
+import { createSessionClient } from '../lib/session-client.js';
 import { MAX_BYTES, parseDefinition, endpointCount, formatError } from '../lib/openapi.js';
 
 const exampleDraft = () => ({ source: example, fileName: 'petstore-example.yaml', sourceType: 'import' });
@@ -20,6 +21,8 @@ export function useWorkbench() {
   const [historyError, setHistoryError] = useState('');
   // State drives the view; this synchronous lock prevents duplicate writes in one event turn.
   const pending = useRef(true);
+  const sessionClient = useRef(null);
+  if (!sessionClient.current) sessionClient.current = createSessionClient(api, clearPrivateView);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -28,16 +31,16 @@ export function useWorkbench() {
     pending.current = true;
     async function initialize() {
       try {
-        const data = await api('/api/me', options);
+        const data = await request('/api/me', options);
         if (!active) return;
         setSession({ loading: false, user: data.user, configured: data.googleConfigured });
         if (!data.user) return;
-        const history = await api('/api/documents?offset=0', options);
+        const history = await request('/api/documents?offset=0', options);
         if (!active) return;
         setItems(history.documents); setNextOffset(history.nextOffset);
         const id = new URLSearchParams(window.location.search).get('doc');
         if (id) {
-          const { document } = await api('/api/documents/' + encodeURIComponent(id), options);
+          const { document } = await request('/api/documents/' + encodeURIComponent(id), options);
           if (!active) return;
           const draft = { source: document.source, fileName: document.fileName, sourceType: document.sourceType };
           const nextPreview = previewFor(draft);
@@ -75,9 +78,8 @@ export function useWorkbench() {
     setPreview(null); selectUrl(null);
   }
 
-  async function request(path, options) {
-    try { return await api(path, options); }
-    catch (error) { if (error.status === 401) clearPrivateView(); throw error; }
+  function request(path, options) {
+    return sessionClient.current.request(path, options);
   }
 
   async function run(operation, failureStatus = '尚未完成操作；編輯區內容已保留。') {
@@ -182,7 +184,7 @@ export function useWorkbench() {
         method: 'POST', headers: { 'content-type': 'application/x-www-form-urlencoded', 'x-auth-return-redirect': '1' },
         body: new URLSearchParams({ csrfToken, callbackUrl: window.location.origin }),
       });
-      clearPrivateView(); const draft = exampleDraft(); setEditor(draft); setPreview(previewFor(draft)); setStatus('已登出。');
+      sessionClient.current.invalidate(); const draft = exampleDraft(); setEditor(draft); setPreview(previewFor(draft)); setStatus('已登出。');
     });
   }
 

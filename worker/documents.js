@@ -1,29 +1,26 @@
-import { load, JSON_SCHEMA } from 'js-yaml';
-export const MAX_BYTES = 5 * 1024 * 1024;
+import { MAX_BYTES, parseDefinition } from '../shared/openapi.js';
+export { MAX_BYTES };
 export function json(body, status = 200) { return Response.json(body, { status, headers: { 'cache-control': 'private, no-store', 'x-content-type-options': 'nosniff' } }); }
 export class HttpError extends Error { constructor(status, message) { super(message); this.status = status; } }
-export async function boundedText(request) {
-  if (Number(request.headers.get('content-length')) > MAX_BYTES) throw new HttpError(413, '文件不能超過 5 MB。');
+export async function boundedText(request, limit = MAX_BYTES) {
+  const tooLarge = () => new HttpError(413, limit === MAX_BYTES ? '文件不能超過 5 MB。' : '設定內容過大。');
+  if (Number(request.headers.get('content-length')) > limit) throw tooLarge();
   if (!request.body) throw new HttpError(400, '請提供 YAML / JSON 內容。');
   const reader = request.body.getReader(); let size = 0; const chunks = [];
   while (true) {
     const { value, done } = await reader.read(); if (done) break;
     size += value.byteLength;
-    if (size > MAX_BYTES) { await reader.cancel(); throw new HttpError(413, '文件不能超過 5 MB。'); }
+    if (size > limit) { await reader.cancel(); throw tooLarge(); }
     chunks.push(value);
   }
   const result = new Uint8Array(size); let offset = 0;
   for (const chunk of chunks) { result.set(chunk, offset); offset += chunk.length; }
-  return new TextDecoder('utf-8', { fatal: true }).decode(result);
+  try { return new TextDecoder('utf-8', { fatal: true }).decode(result); }
+  catch { throw new HttpError(400, '檔案編碼不正確，請使用 UTF-8。'); }
 }
 function validate(source) {
-  let spec;
-  try { spec = load(source, { schema: JSON_SCHEMA }); } catch { throw new HttpError(400, 'YAML 格式錯誤，請修正後再儲存。'); }
-  if (!spec || typeof spec !== 'object' || Array.isArray(spec)) throw new HttpError(400, 'API 定義必須是物件。');
-  if (spec.swagger !== '2.0' && !/^3\.(0|1)\.\d+$/.test(String(spec.openapi || ''))) throw new HttpError(400, '請提供 Swagger 2.0 或 OpenAPI 3.0 / 3.1。');
-  if (typeof spec.info?.title !== 'string' || !spec.info.title.trim() || spec.info.title.length > 500 || typeof spec.info?.version !== 'string') throw new HttpError(400, '文件需要 title（最多 500 字）與 version。');
-  if ((!spec.paths || typeof spec.paths !== 'object' || Array.isArray(spec.paths)) && !(String(spec.openapi).startsWith('3.1.') && (spec.webhooks || spec.components))) throw new HttpError(400, '文件需要 paths 物件。');
-  return spec.info.title;
+  try { return parseDefinition(source).info.title; }
+  catch (error) { throw new HttpError(400, error.mark ? 'YAML 格式錯誤，請修正後再儲存。' : error.message); }
 }
 const columns = 'id, title, COALESCE(display_name, title) AS displayName, category_id AS categoryId, file_name AS fileName, source_type AS sourceType, created_at AS createdAt, updated_at AS updatedAt';
 export async function documents(request, env, user) {
@@ -44,10 +41,11 @@ export async function documents(request, env, user) {
     for (const [param, operator] of [['from', '>='], ['to', '<']]) {
       const date = url.searchParams.get(param);
       if (date) {
-        if (!/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/.test(date) || !Number.isFinite(Date.parse(date))) throw new HttpError(400, '日期格式不正確。');
+        if (!/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/.test(date) || !Number.isFinite(Date.parse(date)) || new Date(date).toISOString() !== date) throw new HttpError(400, '日期格式不正確。');
         filters.push('created_at ' + operator + ' ?'); values.push(date);
       }
     }
+    if (url.searchParams.get('from') && url.searchParams.get('to') && url.searchParams.get('from') >= url.searchParams.get('to')) throw new HttpError(400, '開始日期必須早於結束日期。');
     const orders = { created: 'created_at DESC', updated: 'updated_at DESC', name: 'COALESCE(display_name, title) COLLATE NOCASE ASC' };
     const sort = url.searchParams.get('sort') || 'created';
     if (!Object.hasOwn(orders, sort)) throw new HttpError(400, '排序方式不正確。');
@@ -104,8 +102,7 @@ export async function documents(request, env, user) {
 }
 
 export async function readJson(request) {
-  const raw = await boundedText(request);
-  if (raw.length > 16384) throw new HttpError(413, '設定內容過大。');
+  const raw = await boundedText(request, 16384);
   let body; try { body = JSON.parse(raw); } catch { throw new HttpError(400, '設定格式不正確。'); }
   if (!body || typeof body !== 'object' || Array.isArray(body)) throw new HttpError(400, '設定格式不正確。');
   return body;

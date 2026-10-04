@@ -113,3 +113,12 @@ npm audit --omit=dev
 正式 migrations 由 Sites 發布流程套用。不要修改已套用 migrations；schema 後續修改請新增 migration。
 
 外部 $ref 與 Try it out 會連至文件指定網址，仍受 CORS 限制。Google 登入只識別使用者，不會替你授權文件中的第三方 API。
+
+## 2026-10-04 Code review 修正
+
+- 共用 `shared/openapi.js`，前端預覽與後端保存使用同一組檢查；拒絕循環 YAML alias，限制展開深度、節點及文字量，正常 alias 與 OpenAPI `$ref` 保留。
+- 只修改分類時不重送未變更的名稱，避免原 API title 長於 200 字而無法分類。
+- 驗證實際存在的日期和日期範圍；日期轉換例外進入錯誤提示，避免視窗崩潰。
+- 無效 UTF-8 回傳 400；設定 API 在串流讀取時套用 16 KiB 上限。
+- 所有 workbench 請求共用 session 失效邊界，登入過期或登出後忽略之前較慢回來的私人資料。
+- 27 項自動測試通過；正式依賴 `npm audit --omit=dev` 為 0 個已知漏洞。本次未變更資料庫 schema 或 Google OAuth 設定。

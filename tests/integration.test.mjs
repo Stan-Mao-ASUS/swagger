@@ -1,4 +1,5 @@
 import { test } from 'node:test';
+import { metadataPatch } from '../src/lib/document-metadata.js';
 import assert from 'node:assert/strict';
 import { Miniflare } from 'miniflare';
 import { D1Adapter } from '@auth/d1-adapter';
@@ -93,6 +94,24 @@ test('durable documents, Auth.js database sessions, ownership and CSRF', async t
     assert.equal((await list('sort=name'))[0].displayName, 'Private test API');
     assert.equal((await request('/api/documents?sort=invalid', tokenA)).status, 400);
     assert.equal((await request('/api/documents?from=invalid', tokenA)).status, 400);
+  });
+  await t.test('long legacy title can be classified without renaming, and malformed input is rejected', async () => {
+    const source = yaml.replace('Private test API', '長'.repeat(500));
+    const created = await request('/api/documents', tokenA, 'POST', source);
+    assert.equal(created.status, 201); const original = (await created.json()).document;
+    const response = await request('/api/documents/' + original.id, tokenA, 'PATCH', JSON.stringify(metadataPatch(original, original.displayName, categoryId)));
+    assert.equal(response.status, 200);
+    const updated = (await response.json()).document;
+    assert.equal(updated.categoryId, categoryId); assert.equal(updated.displayName, original.title);
+    assert.equal(updated.createdAt, original.createdAt);
+    assert.equal((await request('/api/documents/' + original.id, tokenA, 'DELETE')).status, 200);
+    const before = (await (await request('/api/documents', tokenA)).json()).documents.length;
+    const cycle = yaml + 'x-cycle: &loop { self: *loop }\n';
+    assert.equal((await request('/api/documents', tokenA, 'POST', cycle)).status, 400);
+    assert.equal((await request('/api/documents', tokenA, 'POST', new Uint8Array([0xff]))).status, 400);
+    assert.equal((await (await request('/api/documents', tokenA)).json()).documents.length, before);
+    assert.equal((await request('/api/documents?from=2026-02-30T00:00:00.000Z', tokenA)).status, 400);
+    assert.equal((await request('/api/documents?from=2026-10-05T00:00:00.000Z&to=2026-10-04T00:00:00.000Z', tokenA)).status, 400);
   });
   await t.test('theme is validated and isolated per account', async () => {
     assert.equal((await (await request('/api/preferences', tokenA)).json()).theme, 'system');

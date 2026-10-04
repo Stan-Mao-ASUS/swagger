@@ -1,15 +1,10 @@
+import { queryString } from '../lib/library-query.js';
 import { useEffect, useRef, useState } from 'react';
 import { Modal } from './Modal.jsx';
 import { DocumentEditDialog } from './DocumentEditDialog.jsx';
 const initialFilters = { q: '', category: '', from: '', to: '', sort: 'created' };
 const sourceLabels = { upload: '上傳', paste: '貼上', import: '匯入' };
 const dateTime = value => new Date(value).toLocaleString('zh-TW', { year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' });
-function queryString(filters, offset) {
-  const query = new URLSearchParams({ q: filters.q, category: filters.category, sort: filters.sort, offset: String(offset) });
-  if (filters.from) query.set('from', new Date(filters.from + 'T00:00:00').toISOString());
-  if (filters.to) { const end = new Date(filters.to + 'T00:00:00'); end.setDate(end.getDate() + 1); query.set('to', end.toISOString()); }
-  return query.toString();
-}
 function CategoryRow({ item, busy, onRename, onDelete }) {
   const [name, setName] = useState(item.name);
   useEffect(() => setName(item.name), [item.name]);
@@ -31,7 +26,7 @@ export function DocumentLibrary({ workbench: w, onClose }) {
   useEffect(() => {
     const controller = new AbortController(); setLoading(true); setError('');
     if (offset === 0) setItems([]);
-    Promise.all([w.request('/api/documents?' + queryString(filters, offset), { signal: controller.signal }), w.request('/api/categories', { signal: controller.signal })]).then(([data, groups]) => {
+    Promise.resolve().then(() => Promise.all([w.request('/api/documents?' + queryString(filters, offset), { signal: controller.signal }), w.request('/api/categories', { signal: controller.signal })])).then(([data, groups]) => {
       if (controller.signal.aborted) return;
       setItems(previous => offset ? [...previous, ...data.documents] : data.documents);
       setNextOffset(data.nextOffset); setCategories(groups.categories);
@@ -51,7 +46,7 @@ export function DocumentLibrary({ workbench: w, onClose }) {
   const changeFilter = (key, value) => setDraft(previous => ({ ...previous, [key]: value }));
   function applyFilters(event) {
     event.preventDefault();
-    if (draft.from && draft.to && draft.from > draft.to) { setError('開始日期不能晚於結束日期。'); return; }
+    try { queryString(draft, 0); } catch (error) { setError(error.message); return; }
     setOffset(0); setFilters({ ...draft }); setNotice('');
   }
   return <Modal wide title="我的文件" onClose={() => { if (!saving && !w.busy) onClose(); }}>

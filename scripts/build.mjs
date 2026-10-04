@@ -9,8 +9,12 @@ async function walk(dir, prefix = '') {
     else assets['/' + name] = await readFile(path.join(dir, item.name), 'utf8');
   }
 }
-await walk('public');
 await mkdir('.sites-runtime', { recursive: true });
+// Build the JSX frontend independently; never include Worker code or secrets in it.
+const client = await build({ entryPoints: ['src/main.jsx'], outfile: 'app.js', bundle: true, format: 'iife', platform: 'browser',
+  target: 'es2022', jsx: 'automatic', minify: true, write: false, define: { 'process.env.NODE_ENV': '"production"' }, logLevel: 'info' });
+await walk('public');
+assets['/app.js'] = client.outputFiles.find(file => file.path.endsWith('app.js')).text;
 await writeFile('.sites-runtime/assets.js', `export default ${JSON.stringify(assets)};`);
 await rm('dist', { recursive: true, force: true });
 await mkdir('dist/.openai', { recursive: true });

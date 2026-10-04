@@ -4,6 +4,12 @@
 
 沿用原站 Swagger UI、YAML / JSON 解析與版面。支援 Swagger 2.0、OpenAPI 3.0 / 3.1、5 MB 檔案、貼上、拖曳、範例匯入、Authorize 與 Try it out。
 
+## 技術架構
+
+前端已轉為 React 19 + JSX，使用 Hooks 管理登入狀態、編輯內容、非同步儲存與文件歷史。既有 CSS 與 Swagger UI 保留，Swagger UI 由獨立 React 元件掛載，每次切換文件都建立新實例以清除先前的 API 授權狀態。
+
+後端仍是 Cloudflare Workers、Auth.js Core / Google Provider、D1（SQLite）與 R2。React 只透過原有 API 操作資料，所有 ownership、Origin、OAuth 與 session 驗證繼續由後端處理。esbuild 分別打包前端與 Worker，沒有加入 Next.js 或改變正式站的 Google 回呼路徑。
+
 ## 新增功能
 
 - Google 登入：Auth.js Core + Google Provider + 官方 D1 adapter，資料庫 session。
@@ -73,11 +79,15 @@ npm audit --omit=dev
 
 `node tests/browser-preview.mjs` 提供僅限 loopback 的本機 QA。`/__qa` 可選兩個假資料帳號，驗證頁面操作。這個測試程式不會被打包／發布；正式 Worker 沒有 QA 登入入口。使用前先停止其他占用 4173 的 dev server。
 
-正式 Google Login 及兩個真實 Google 帳號的完整驗證，須完成上述 OAuth secrets 設定後進行。
+正式站已設定 Google OAuth secrets，並完成一次真實 Google 登入與貼上 YAML 保存。兩個真實 Google 帳號的完整隔離驗證尚待完成；自動測試使用獨立測試 session。`tests/oauth.test.mjs` 另外模擬完整 Google OAuth 回呼及錯誤路徑，不能取代 Google 實際登入驗證。
 
 ## 程式結構
 
-- `public/`：原 UI、瀏覽器解析、Swagger UI、歷史介面；保留原 vendor 與授權。
+- `src/main.jsx`、`src/App.jsx`：React 入口與主畫面。
+- `src/components/`：登入列、YAML 編輯區、文件歷史與 Swagger 預覽元件。
+- `src/hooks/useWorkbench.js`：登入、編輯、匯入、保存、歷史開啟與刪除流程。
+- `src/lib/`：API client、YAML / OpenAPI 解析及錯誤格式。
+- `public/`：HTML 入口、原 CSS、Swagger UI vendor 與授權。`app.js` 由建置產生，不直接編輯。
 - `worker/auth.js`：Google Provider、D1 session、固定來源與身份驗證。
 - `worker/documents.js`：文件 CRUD、ownership、D1 metadata、R2 內容。
 - `worker/index.js`：HTTP 路由、Origin 驗證與公開資源。

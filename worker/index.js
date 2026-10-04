@@ -10,7 +10,9 @@ export default {
         if (path === '/api/me' && request.method === 'GET') return json({ user: await getUser(request, env), googleConfigured: authReady(env) });
         if (path.startsWith('/api/auth/')) {
           if (!authReady(env)) return json({ error: 'Google 登入尚未設定完成。' }, 503);
-          const response = await handleAuth(request, env);
+          // Auth.js can return Response.redirect(), whose headers are immutable.
+          const authResponse = await handleAuth(request, env);
+          const response = new Response(authResponse.body, authResponse);
           response.headers.set('cache-control', 'private, no-store');
           return response;
         }

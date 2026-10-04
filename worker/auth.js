@@ -4,6 +4,20 @@ import { D1Adapter } from '@auth/d1-adapter';
 export const SITE_ORIGIN = 'https://swagger-yaml-workbench-stan.tonytonitone6.chatgpt.site';
 export function origin(env) { return env.SITE_ORIGIN || SITE_ORIGIN; }
 export function authReady(env) { return !!(env.AUTH_GOOGLE_ID && env.AUTH_GOOGLE_SECRET && env.AUTH_SECRET); }
+function logAuthError(error, env) {
+  const cause = error.cause?.err || error.cause;
+  // Never log callback URLs, codes, tokens, profiles or provider response bodies.
+  const clean = value => {
+    let message = String(value || '');
+    for (const secret of [env.AUTH_GOOGLE_SECRET, env.AUTH_SECRET, env.AUTH_GOOGLE_ID]) {
+      if (secret) message = message.split(secret).join('[redacted]');
+    }
+    return message.replace(/https?:\/\/\S+/g, '[url]').replace(/[A-Za-z0-9_\-]{30,}/g, '[redacted]').slice(0, 400);
+  };
+  const providerError = cause?.cause?.error;
+  const safeProviderError = ['invalid_client', 'invalid_grant', 'invalid_request', 'unauthorized_client', 'access_denied', 'server_error', 'temporarily_unavailable'].includes(providerError) ? providerError : '';
+  console.error('Authentication failed:', error.type || error.name, clean(cause?.name), clean(cause?.message), clean(cause?.code), safeProviderError);
+}
 export function authConfig(env) {
   return {
     basePath: '/api/auth', trustHost: true,
@@ -17,7 +31,7 @@ export function authConfig(env) {
       session: ({ session, user }) => ({ ...session, user: { id: user.id, name: user.name, email: user.email } }),
       redirect: () => origin(env) + '/',
     },
-    logger: { error: error => console.error('Authentication failed:', error.type || error.name), warn: code => console.warn('Authentication warning:', code), debug: () => {} },
+    logger: { error: error => logAuthError(error, env), warn: code => console.warn('Authentication warning:', code), debug: () => {} },
   };
 }
 export async function handleAuth(request, env) {

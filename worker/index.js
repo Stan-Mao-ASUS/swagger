@@ -1,5 +1,6 @@
 import assets from '../.sites-runtime/assets.js';
 import { handleAuth, getUser, authReady, origin } from './auth.js';
+import { librarySettings } from './library-settings.js';
 import { documents, json, HttpError } from './documents.js';
 export default {
   async fetch(request, env) {
@@ -16,10 +17,10 @@ export default {
           response.headers.set('cache-control', 'private, no-store');
           return response;
         }
-        if (path === '/api/documents' || path.startsWith('/api/documents/')) {
+        if (path === '/api/preferences' || path === '/api/categories' || path.startsWith('/api/categories/') || path === '/api/documents' || path.startsWith('/api/documents/')) {
           const user = await getUser(request, env);
           if (!user) throw new HttpError(401, '請先使用 Google 登入。');
-          return await documents(request, env, user);
+          return path.startsWith('/api/documents') ? await documents(request, env, user) : await librarySettings(request, env, user);
         }
         return json({ error: '找不到此 API。' }, 404);
       }

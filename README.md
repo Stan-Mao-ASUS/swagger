@@ -21,6 +21,21 @@
 - 寫入及刪除驗證 Origin，Auth.js 處理 CSRF、state、PKCE、nonce、Google 回傳身份。只允許 email_verified 的 Google 帳號。
 - 刪除先以 tombstone 隱藏紀錄，再刪 R2、D1；R2 失敗時仍不可讀取該紀錄，可重試 DELETE 完成清理。
 
+## 頭像、外觀與文件管理
+
+右上角使用 Google 頭像，照片無法載入時顯示姓名首字。選單提供「我的文件」、淺色／深色／跟隨系統及登出。登入後的 theme 儲存於 D1 preferences；localStorage 僅快取顯示偏好，頁面啟動後以帳號設定為準。
+
+「我的文件」支援自訂名稱、單一分類、名稱／原始檔名搜尋、建立日期區間、最近新增／最近修改／名稱排序、分頁、開啟及刪除。日期區間依瀏覽器當地時間轉成 UTC，結束日包含當天。桌機表格與手機卡片共用資料。
+
+- 文件新增 nullable display_name、category_id；舊文件名稱 fallback 到 title，預設未分類，不改原 YAML、fileName 或 createdAt。
+- 分類可新增、改名、移除；移除分類將文件移至未分類並更新 updatedAt，保留 R2 內容。
+- 新 API：GET/PATCH /api/preferences、GET/POST /api/categories、PATCH/DELETE /api/categories/:id、PATCH /api/documents/:id。
+- 文件列表 API 支援 q、category、from、to、sort、offset，全部由後端依 session user id 篩選。
+- 修改文件時，SQL 同時檢查文件與分類 ownership，前端傳入的 owner 或日期欄位會被拒絕。
+- 本次 schema 使用新增的 0001 migration；0000 保持原樣。正式 Google OAuth credentials 和 redirect URI 不變。
+
+20 項自動測試涵蓋原有功能、跨帳號 metadata/classification/theme、搜尋日期排序、分類移除保留內容及舊資料 migration。本機 UI 已測試頭像選單、主題切換、文件改名／分類、刷新保存、搜尋空結果與不同帳號的文件／分類隔離。
+
 ## Google OAuth 設定（正式登入前必做）
 
 此專案不是 Next.js，因此直接使用 Web Request / Response 相容的 Auth.js Core，搭配 Sites Worker。

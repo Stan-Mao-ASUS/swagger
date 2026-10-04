@@ -1,7 +1,7 @@
 import { useRef, useState } from 'react';
 import { DocumentHistory } from './DocumentHistory.jsx';
 
-export function SourcePanel({ workbench: w }) {
+export function SourcePanel({ workbench: w, onLibrary }) {
   const fileInput = useRef(null);
   const dragDepth = useRef(0);
   const [dragging, setDragging] = useState(false);
@@ -44,6 +44,6 @@ export function SourcePanel({ workbench: w }) {
     {w.error && <div id="error" className="error" role="alert">{w.error}</div>}
     <p className="local-note">登入後，上傳或貼上文件會保存到你的個人歷史。外部參照及「Try it out」會連線至文件指定的網址。</p>
     <DocumentHistory session={w.session} busy={w.busy} items={w.items} nextOffset={w.nextOffset} selectedId={w.selectedId} historyError={w.historyError}
-      onRefresh={w.refreshHistory} onOpen={w.openDocument} onDelete={w.deleteDocument} />
+      onLibrary={onLibrary} onRefresh={w.refreshHistory} onOpen={w.openDocument} onDelete={w.deleteDocument} />
   </aside>;
 }

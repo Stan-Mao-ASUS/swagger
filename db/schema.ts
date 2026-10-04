@@ -13,8 +13,16 @@ export const sessions = sqliteTable('sessions', {
 export const verificationTokens = sqliteTable('verification_tokens', {
   identifier: text('identifier').notNull(), token: text('token').notNull(), expires: text('expires').notNull(),
 }, table => [primaryKey({ columns: [table.identifier, table.token] })]);
+export const categories = sqliteTable('categories', {
+  id: text('id').primaryKey(), userId: text('user_id').notNull().references(() => users.id, { onDelete: 'cascade' }),
+  name: text('name').notNull(),
+}, table => [uniqueIndex('idx_categories_owner_name').on(table.userId, table.name)]);
+export const preferences = sqliteTable('preferences', {
+  userId: text('user_id').primaryKey().references(() => users.id, { onDelete: 'cascade' }),
+  theme: text('theme', { enum: ['light', 'dark', 'system'] }).notNull().default('system'),
+});
 export const documents = sqliteTable('documents', {
   id: text('id').primaryKey(), userId: text('user_id').notNull().references(() => users.id, { onDelete: 'cascade' }),
-  title: text('title').notNull(), fileName: text('file_name').notNull(), sourceType: text('source_type').notNull(),
+  title: text('title').notNull(), displayName: text('display_name'), categoryId: text('category_id').references(() => categories.id, { onDelete: 'set null' }), fileName: text('file_name').notNull(), sourceType: text('source_type').notNull(),
   objectKey: text('object_key').notNull().unique(), createdAt: text('created_at').notNull(), updatedAt: text('updated_at').notNull(), deletedAt: text('deleted_at'),
 }, table => [index('idx_documents_owner_history').on(table.userId, table.createdAt, table.id)]);

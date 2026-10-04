@@ -57,6 +57,51 @@ test('durable documents, Auth.js database sessions, ownership and CSRF', async t
     assert.equal((await request('/api/documents', tokenA, 'POST', yaml, { 'x-source-type': 'invalid' })).status, 400);
     assert.equal((await request('/api/documents', tokenA, 'POST', 'x'.repeat(5 * 1024 * 1024 + 1))).status, 413);
   });
+  let categoryId;
+  await t.test('category ownership, metadata validation and immutable source', async () => {
+    assert.equal((await request('/api/categories', null)).status, 401);
+    assert.equal((await request('/api/preferences', null)).status, 401);
+    const created = await request('/api/categories', tokenA, 'POST', JSON.stringify({ name: '會員系統' }));
+    assert.equal(created.status, 201); categoryId = (await created.json()).category.id;
+    assert.equal((await request('/api/categories', tokenA, 'POST', JSON.stringify({ name: '會員系統' }))).status, 409);
+    assert.deepEqual((await (await request('/api/categories?userId=' + alice.id, tokenB)).json()).categories, []);
+    for (const method of ['PATCH', 'DELETE']) assert.equal((await request('/api/categories/' + categoryId, tokenB, method, method === 'PATCH' ? JSON.stringify({ name: 'stolen' }) : undefined)).status, 404);
+    const patch = { displayName: '會員 API v2', categoryId };
+    const before = (await (await request('/api/documents/' + ids[1], tokenA)).json()).document;
+    assert.equal((await request('/api/documents/' + ids[1], tokenB, 'PATCH', JSON.stringify(patch))).status, 404);
+    const response = await request('/api/documents/' + ids[1], tokenA, 'PATCH', JSON.stringify(patch));
+    assert.equal(response.status, 200); const after = (await response.json()).document;
+    assert.equal(after.displayName, patch.displayName); assert.equal(after.categoryId, categoryId);
+    assert.equal(after.title, before.title); assert.equal(after.fileName, before.fileName); assert.equal(after.createdAt, before.createdAt); assert.ok(after.updatedAt >= before.updatedAt);
+    assert.equal((await (await request('/api/documents/' + ids[1], tokenA)).json()).document.source, yaml);
+    const bobCategory = (await (await request('/api/categories', tokenB, 'POST', JSON.stringify({ name: 'Bob private' }))).json()).category.id;
+    assert.equal((await request('/api/documents/' + ids[1], tokenA, 'PATCH', JSON.stringify({ categoryId: bobCategory }))).status, 404);
+    for (const body of [{ displayName: ' ' }, { userId: bob.id }, { createdAt: '2020-01-01' }, { displayName: 'x'.repeat(201) }]) assert.equal((await request('/api/documents/' + ids[1], tokenA, 'PATCH', JSON.stringify(body))).status, 400);
+    assert.equal((await request('/api/documents/' + ids[1], tokenA, 'PATCH', JSON.stringify(patch), { origin: 'https://attacker.example' })).status, 403);
+    assert.equal((await request('/api/categories/' + categoryId, tokenA, 'PATCH', JSON.stringify({ name: '核心 API' }))).status, 200);
+  });
+  await t.test('server search, category, date and sorting remain owner scoped', async () => {
+    const list = async (query, token = tokenA) => (await (await request('/api/documents?' + query, token)).json()).documents;
+    assert.deepEqual((await list('q=' + encodeURIComponent('會員'))).map(d => d.id), [ids[1]]);
+    assert.equal((await list('q=private.yaml')).length, 3);
+    assert.equal((await list('category=' + categoryId)).length, 1);
+    assert.equal((await list('category=uncategorized')).length, 2);
+    assert.equal((await list('category=' + categoryId + '&userId=' + alice.id, tokenB)).length, 0);
+    assert.equal((await list('from=2000-01-01T00:00:00.000Z&to=2001-01-01T00:00:00.000Z')).length, 0);
+    assert.equal((await list('from=2000-01-01T00:00:00.000Z&to=2099-01-01T00:00:00.000Z')).length, 3);
+    assert.equal((await list('sort=updated'))[0].id, ids[1]);
+    assert.equal((await list('sort=name'))[0].displayName, 'Private test API');
+    assert.equal((await request('/api/documents?sort=invalid', tokenA)).status, 400);
+    assert.equal((await request('/api/documents?from=invalid', tokenA)).status, 400);
+  });
+  await t.test('theme is validated and isolated per account', async () => {
+    assert.equal((await (await request('/api/preferences', tokenA)).json()).theme, 'system');
+    assert.equal((await request('/api/preferences', tokenA, 'PATCH', JSON.stringify({ theme: 'dark' }))).status, 200);
+    assert.equal((await (await request('/api/preferences', tokenB)).json()).theme, 'system');
+    assert.equal((await request('/api/preferences', tokenA, 'PATCH', JSON.stringify({ theme: 'purple' }))).status, 400);
+    assert.equal((await request('/api/preferences', tokenB, 'PATCH', JSON.stringify({ theme: 'light', userId: alice.id }))).status, 400);
+    assert.equal((await request('/api/preferences', tokenA, 'PATCH', JSON.stringify({ theme: 'light' }), { origin: '' })).status, 403);
+  });
   await t.test('refresh and process restart retain metadata and original YAML', async () => {
     assert.equal((await (await request('/api/documents/' + ids[1], tokenA)).json()).document.source, yaml);
     await mf.dispose(); mf = new Miniflare(options); db = await mf.getD1Database('DB'); adapter = D1Adapter(db);
@@ -68,6 +113,16 @@ test('durable documents, Auth.js database sessions, ownership and CSRF', async t
     await adapter.deleteSession(tokenA);
     assert.equal((await request('/api/documents', tokenA)).status, 401);
     await adapter.createSession({ sessionToken: tokenA, userId: alice.id, expires: new Date(Date.now() + 86400000) });
+    assert.equal((await (await request('/api/documents', tokenA)).json()).documents.length, 3);
+  });
+  await t.test('metadata and theme survive restart and new session; category removal preserves documents', async () => {
+    const doc = (await (await request('/api/documents/' + ids[1], tokenA)).json()).document;
+    assert.equal(doc.displayName, '會員 API v2'); assert.equal(doc.categoryId, categoryId);
+    assert.equal((await (await request('/api/preferences', tokenA)).json()).theme, 'dark');
+    assert.equal((await (await request('/api/categories', tokenA)).json()).categories[0].name, '核心 API');
+    assert.equal((await request('/api/categories/' + categoryId, tokenA, 'DELETE')).status, 200);
+    const retained = (await (await request('/api/documents/' + ids[1], tokenA)).json()).document;
+    assert.equal(retained.categoryId, null); assert.equal(retained.source, yaml); assert.equal(retained.displayName, '會員 API v2');
     assert.equal((await (await request('/api/documents', tokenA)).json()).documents.length, 3);
   });
   await t.test('delete removes both metadata and object storage', async () => {

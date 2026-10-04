@@ -28,7 +28,7 @@ export function authConfig(env) {
     providers: [Google({ clientId: env.AUTH_GOOGLE_ID, clientSecret: env.AUTH_GOOGLE_SECRET, checks: ['pkce', 'state', 'nonce'], authorization: { params: { prompt: 'select_account', scope: 'openid email profile' } } })],
     callbacks: {
       signIn: ({ account, profile }) => account?.provider === 'google' && profile?.email_verified === true,
-      session: ({ session, user }) => ({ ...session, user: { id: user.id, name: user.name, email: user.email } }),
+      session: ({ session, user }) => ({ ...session, user: { id: user.id, name: user.name, email: user.email, image: user.image } }),
       redirect: () => origin(env) + '/',
     },
     logger: { error: error => logAuthError(error, env), warn: code => console.warn('Authentication warning:', code), debug: () => {} },

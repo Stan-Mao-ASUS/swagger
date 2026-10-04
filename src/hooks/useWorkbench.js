@@ -83,8 +83,8 @@ export function useWorkbench() {
   async function run(operation, failureStatus = '尚未完成操作；編輯區內容已保留。') {
     if (pending.current) return;
     pending.current = true; setBusy(true); setError('');
-    try { await operation(); }
-    catch (error) { setError(formatError(error)); setStatus(failureStatus); }
+    try { await operation(); return true; }
+    catch (error) { setError(formatError(error)); setStatus(failureStatus); return false; }
     finally { pending.current = false; setBusy(false); }
   }
 
@@ -158,7 +158,7 @@ export function useWorkbench() {
   }
 
   function deleteDocument(item) {
-    if (pending.current || !window.confirm(`刪除「${item.title}」？這會移除已儲存的文件，無法復原。`)) return;
+    if (pending.current || !window.confirm(`刪除「${item.displayName || item.title}」？這會移除已儲存的文件，無法復原。`)) return;
     return run(async () => {
       await request('/api/documents/' + encodeURIComponent(item.id), { method: 'DELETE' });
       setItems(previous => previous.filter(document => document.id !== item.id));
@@ -188,7 +188,7 @@ export function useWorkbench() {
 
   return {
     editor, preview, session, items, nextOffset, selectedId, busy, status, error, historyError,
-    save, changeSource, pasteSource, importExample, loadFile, openDocument, deleteDocument, signOut,
+    request, save, changeSource, pasteSource, importExample, loadFile, openDocument, deleteDocument, signOut,
     refreshHistory: append => session.user && run(() => fetchHistory(append)),
     reportError: message => setError(message),
   };

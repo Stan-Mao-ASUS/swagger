@@ -21,3 +21,4 @@ await mkdir('dist/.openai', { recursive: true });
 await build({ entryPoints: ['worker/index.js'], outfile: 'dist/server/index.js', bundle: true, format: 'esm', platform: 'browser', target: 'es2022', minify: true, conditions: ['worker', 'browser'], logLevel: 'info' });
 await cp('.openai/hosting.json', 'dist/.openai/hosting.json');
 await cp('drizzle', 'dist/.openai/drizzle', { recursive: true });
+await import('./verify-build.mjs');

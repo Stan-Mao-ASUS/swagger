@@ -5,7 +5,7 @@ import { createSessionClient } from '../lib/session-client.js';
 import { MAX_BYTES, parseDefinition, endpointCount, formatError } from '../lib/openapi.js';
 
 const exampleDraft = () => ({ source: example, fileName: 'petstore-example.yaml', sourceType: 'import' });
-const previewFor = draft => ({ spec: parseDefinition(draft.source), fileName: draft.fileName });
+const previewFor = draft => ({ spec: parseDefinition(draft.source), fileName: draft.fileName, source: draft.source });
 const selectUrl = id => window.history.replaceState(null, '', id ? '?doc=' + encodeURIComponent(id) : '/');
 
 export function useWorkbench() {
@@ -15,6 +15,8 @@ export function useWorkbench() {
   const [items, setItems] = useState([]);
   const [nextOffset, setNextOffset] = useState(null);
   const [selectedId, setSelectedId] = useState(null);
+  const [currentVersion, setCurrentVersion] = useState(null);
+  const [versionNote, setVersionNote] = useState('');
   const [busy, setBusy] = useState(true);
   const [status, setStatus] = useState('已載入 3 個 API 端點');
   const [error, setError] = useState('');
@@ -44,8 +46,8 @@ export function useWorkbench() {
           if (!active) return;
           const draft = { source: document.source, fileName: document.fileName, sourceType: document.sourceType };
           const nextPreview = previewFor(draft);
-          setEditor(draft); setPreview(nextPreview); setSelectedId(document.id);
-          setStatus('已從歷史開啟。編輯後儲存會建立新紀錄。');
+          setEditor(draft); setPreview(nextPreview); setSelectedId(document.id); setCurrentVersion(document.currentVersion); setVersionNote('');
+          setStatus('已開啟文件。編輯後可儲存新版本，舊版會保留。');
         }
       } catch (error) {
         if (!active) return;
@@ -74,7 +76,7 @@ export function useWorkbench() {
 
   function clearPrivateView() {
     setSession(previous => ({ ...previous, user: null }));
-    setItems([]); setNextOffset(null); setSelectedId(null); setHistoryError('');
+    setItems([]); setNextOffset(null); setSelectedId(null); setCurrentVersion(null); setVersionNote(''); setHistoryError('');
     setPreview(null); selectUrl(null);
   }
 
@@ -96,7 +98,7 @@ export function useWorkbench() {
     setNextOffset(data.nextOffset); setHistoryError('');
   }
 
-  async function persist(draft) {
+  async function persist(draft, newVersion = false) {
     const nextPreview = previewFor(draft);
     setPreview(nextPreview);
     setStatus(`已載入 ${endpointCount(nextPreview.spec)} 個 API 端點`);
@@ -105,11 +107,11 @@ export function useWorkbench() {
       return;
     }
     setStatus('正在儲存…');
-    const data = await request('/api/documents', {
-      method: 'POST', headers: { 'content-type': 'text/plain; charset=utf-8', 'x-source-type': draft.sourceType, 'x-file-name': encodeURIComponent(draft.fileName) }, body: draft.source,
+    const data = await request(newVersion ? `/api/documents/${selectedId}/content` : '/api/documents', {
+      method: newVersion ? 'PUT' : 'POST', headers: { ...(newVersion ? { 'x-expected-version': String(currentVersion), 'x-version-note': encodeURIComponent(versionNote) } : {}), 'content-type': 'text/plain; charset=utf-8', 'x-source-type': draft.sourceType, 'x-file-name': encodeURIComponent(draft.fileName) }, body: draft.source,
     });
-    setSelectedId(data.document.id); selectUrl(data.document.id);
-    setStatus('已儲存至個人歷史，重新整理後仍可開啟。');
+    setSelectedId(data.document.id); setCurrentVersion(data.document.currentVersion); setVersionNote(''); selectUrl(data.document.id);
+    setStatus(`已儲存 v${data.document.currentVersion}，重新整理後仍可開啟。`);
     try { await fetchHistory(); }
     catch (error) {
       if (error.status === 401) throw error;
@@ -117,26 +119,26 @@ export function useWorkbench() {
     }
   }
 
-  function save(draft = editor) {
-    return run(() => persist(draft), '尚未確認儲存。請先重新整理歷史確認；編輯區內容已保留。');
+  function save(draft = editor, asNew = false) {
+    return run(() => persist(draft, !asNew && !!selectedId), '尚未確認儲存。請先重新整理歷史確認；編輯區內容已保留。');
   }
 
   function changeSource(source) {
     if (pending.current) return;
-    setEditor({ source, fileName: 'pasted-api.yaml', sourceType: 'paste' });
-    setStatus('內容已變更，按「儲存並更新文件」套用。'); setError('');
+    setEditor(previous => ({ ...previous, source }));
+    setStatus('內容已變更，儲存後套用；原版本會保留。'); setError('');
   }
 
   function pasteSource(source) {
     if (pending.current) return;
     const draft = { source, fileName: 'pasted-api.yaml', sourceType: 'paste' };
     setEditor(draft);
-    return save(draft);
+    return save(draft, true);
   }
 
   function importExample() {
     if (pending.current) return;
-    const draft = exampleDraft(); setEditor(draft); return save(draft);
+    const draft = exampleDraft(); setEditor(draft); return save(draft, true);
   }
 
   function loadFile(file) {
@@ -154,19 +156,30 @@ export function useWorkbench() {
       const { document } = await request('/api/documents/' + encodeURIComponent(id));
       const draft = { source: document.source, fileName: document.fileName, sourceType: document.sourceType };
       const nextPreview = previewFor(draft);
-      setEditor(draft); setPreview(nextPreview); setSelectedId(document.id); selectUrl(document.id);
-      setStatus('已從歷史開啟。編輯後儲存會建立新紀錄。');
+      setEditor(draft); setPreview(nextPreview); setSelectedId(document.id); setCurrentVersion(document.currentVersion); setVersionNote(''); selectUrl(document.id);
+      setStatus('已開啟文件。編輯後可儲存新版本，舊版會保留。');
+    });
+  }
+
+  function restoreVersion(version) {
+    return run(async () => {
+      const { document } = await request(`/api/documents/${selectedId}/restore`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ version, expectedVersion: currentVersion }) });
+      const restored = await request(`/api/documents/${selectedId}/versions/${document.currentVersion}`);
+      const draft = { source: restored.source, fileName: restored.fileName, sourceType: editor.sourceType };
+      setEditor(draft); setPreview(previewFor(draft)); setCurrentVersion(document.currentVersion); setVersionNote('');
+      setStatus(`已將 v${version} 還原為 v${document.currentVersion}，所有舊版本仍保留。`);
+      try { await fetchHistory(); } catch (error) { if (error.status === 401) throw error; setHistoryError('已還原，請重新整理歷史清單。'); }
     });
   }
 
   function deleteDocument(item) {
-    if (pending.current || !window.confirm(`刪除「${item.displayName || item.title}」？這會移除已儲存的文件，無法復原。`)) return;
+    if (pending.current || !window.confirm(`刪除「${item.displayName || item.title}」？這會移除文件與所有版本，無法復原。`)) return;
     return run(async () => {
       await request('/api/documents/' + encodeURIComponent(item.id), { method: 'DELETE' });
       setItems(previous => previous.filter(document => document.id !== item.id));
       if (selectedId === item.id) {
         const draft = exampleDraft();
-        setSelectedId(null); selectUrl(null); setEditor(draft); setPreview(previewFor(draft));
+        setSelectedId(null); setCurrentVersion(null); setVersionNote(''); selectUrl(null); setEditor(draft); setPreview(previewFor(draft));
       }
       setStatus('文件已刪除。');
       try { await fetchHistory(); }
@@ -189,7 +202,7 @@ export function useWorkbench() {
   }
 
   return {
-    editor, preview, session, items, nextOffset, selectedId, busy, status, error, historyError,
+    editor, preview, currentVersion, versionNote, setVersionNote, restoreVersion, session, items, nextOffset, selectedId, busy, status, error, historyError,
     request, save, changeSource, pasteSource, importExample, loadFile, openDocument, deleteDocument, signOut,
     refreshHistory: append => session.user && run(() => fetchHistory(append)),
     reportError: message => setError(message),

@@ -12,6 +12,7 @@
   "dependencies": {
     "@auth/core": "^0.41.3",
     "@auth/d1-adapter": "1.11.0",
+    "diff": "^9.0.0",
     "drizzle-orm": "^0.45.3",
     "js-yaml": "^4.1.1",
     "react": "^19.2.0",

@@ -121,11 +121,46 @@ test('durable documents, Auth.js database sessions, ownership and CSRF', async t
     assert.equal((await request('/api/preferences', tokenB, 'PATCH', JSON.stringify({ theme: 'light', userId: alice.id }))).status, 400);
     assert.equal((await request('/api/preferences', tokenA, 'PATCH', JSON.stringify({ theme: 'light' }), { origin: '' })).status, 403);
   });
+  await t.test('private versions, legacy snapshots, restore and optimistic concurrency', async () => {
+    const route = '/api/documents/' + ids[0];
+    // Simulate a pre-feature document: original object exists, no history row yet.
+    await db.prepare('DELETE FROM document_versions WHERE document_id = ?').bind(ids[0]).run();
+    const updated = yaml.replace('Private test API', 'Updated API');
+    assert.equal((await request(route + '/content', tokenB, 'PUT', updated, { 'x-expected-version': '1' })).status, 404);
+    for (const suffix of ['/versions', '/versions/1']) assert.equal((await request(route + suffix, tokenB)).status, 404);
+    assert.equal((await request(route + '/restore', tokenB, 'POST', JSON.stringify({ version: 1, expectedVersion: 1 }))).status, 404);
+    assert.equal((await request(route + '/content', tokenA, 'PUT', updated)).status, 400);
+    const write = await request(route + '/content', tokenA, 'PUT', updated, { 'x-expected-version': '1', 'x-version-note': encodeURIComponent('更新標題') });
+    assert.equal(write.status, 201); assert.equal((await write.json()).document.currentVersion, 2);
+    assert.equal((await (await request(route + '/versions/1', tokenA)).json()).source, yaml);
+    assert.equal((await (await request(route + '/versions/2', tokenA)).json()).source, updated);
+    const history = await (await request(route + '/versions', tokenA)).json();
+    assert.deepEqual(history.versions.map(v => v.version), [2, 1]); assert.equal(history.versions[0].note, '更新標題');
+    assert.equal((await request(route + '/content', tokenA, 'PUT', yaml, { 'x-expected-version': '1' })).status, 409);
+    const writes = await Promise.all(['Winner A', 'Winner B'].map(title => request(route + '/content', tokenA, 'PUT', yaml.replace('Private test API', title), { 'x-expected-version': '2' })));
+    assert.deepEqual(writes.map(r => r.status).sort(), [201, 409]);
+    const winner = (await (await request(route, tokenA)).json()).document;
+    assert.equal(winner.currentVersion, 3); assert.match(winner.source, /Winner [AB]/);
+    assert.equal((await (await request(route + '/versions/3', tokenA)).json()).source, winner.source);
+    const bucket = await mf.getR2Bucket('BUCKET');
+    const versionObjects = (await bucket.list({ prefix: encodeURIComponent(alice.id) + '/' + ids[0] + '/' })).objects;
+    assert.equal(versionObjects.length, 2, 'losing concurrent write leaves no orphan and cannot delete winner');
+    const restore = await request(route + '/restore', tokenA, 'POST', JSON.stringify({ version: 1, expectedVersion: 3 }));
+    assert.equal(restore.status, 201); assert.equal((await restore.json()).document.currentVersion, 4);
+    assert.equal((await (await request(route, tokenA)).json()).document.source, yaml);
+    assert.equal((await (await request(route + '/versions/2', tokenA)).json()).source, updated);
+    assert.equal((await (await request(route + '/versions/4', tokenA)).json()).note, '還原自 v1');
+    assert.equal((await request(route + '/content', tokenA, 'PUT', 'bad yaml', { 'x-expected-version': '4' })).status, 400);
+    assert.equal((await request(route + '/versions/999', tokenA)).status, 404);
+    assert.equal((await request(route + '/restore', tokenA, 'POST', JSON.stringify({ version: 1, expectedVersion: 3 }))).status, 409);
+    assert.equal((await request(route + '/restore', tokenA, 'POST', JSON.stringify({ version: 1, expectedVersion: 4 }), { origin: 'https://attacker.example' })).status, 403);
+  });
   await t.test('refresh and process restart retain metadata and original YAML', async () => {
     assert.equal((await (await request('/api/documents/' + ids[1], tokenA)).json()).document.source, yaml);
     await mf.dispose(); mf = new Miniflare(options); db = await mf.getD1Database('DB'); adapter = D1Adapter(db);
     const response = await request('/api/documents', tokenA); assert.equal(response.status, 200);
     assert.equal((await response.json()).documents.length, 3);
+    assert.equal((await (await request('/api/documents/' + ids[0] + '/versions', tokenA)).json()).versions.length, 4);
     assert.equal((await (await request('/api/documents/' + ids[1], tokenA)).json()).document.source, yaml);
   });
   await t.test('a new session for the same account retains history', async () => {
@@ -146,10 +181,14 @@ test('durable documents, Auth.js database sessions, ownership and CSRF', async t
   });
   await t.test('delete removes both metadata and object storage', async () => {
     const row = await db.prepare('SELECT object_key FROM documents WHERE id = ?').bind(ids[0]).first();
+    const keys = (await db.prepare('SELECT object_key FROM document_versions WHERE document_id = ?').bind(ids[0]).all()).results;
     assert.equal((await request('/api/documents/' + ids[0], tokenA, 'DELETE')).status, 200);
     assert.equal((await request('/api/documents/' + ids[0], tokenA)).status, 404);
     assert.equal(await db.prepare('SELECT id FROM documents WHERE id = ?').bind(ids[0]).first(), null);
     const bucket = await mf.getR2Bucket('BUCKET'); assert.equal(await bucket.get(row.object_key), null);
+    for (const version of keys) assert.equal(await bucket.get(version.object_key), null);
+    assert.equal((await db.prepare('SELECT * FROM document_versions WHERE document_id = ?').bind(ids[0]).all()).results.length, 0);
+    assert.equal((await request('/api/documents/' + ids[0] + '/versions/1', tokenA)).status, 404);
   });
   await t.test('Auth.js sign-out checks CSRF and revokes the database session', async () => {
     const csrfResponse = await request('/api/auth/csrf', tokenB); const { csrfToken } = await csrfResponse.json();

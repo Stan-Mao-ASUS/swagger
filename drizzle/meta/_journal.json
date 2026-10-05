@@ -15,6 +15,13 @@
       "when": 1791107672839,
       "tag": "0001_mature_war_machine",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "6",
+      "when": 1791181760782,
+      "tag": "0002_lame_zarek",
+      "breakpoints": true
     }
   ]
 }

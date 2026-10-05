@@ -39,7 +39,9 @@ export function SourcePanel({ workbench: w, onLibrary }) {
       onChange={event => w.changeSource(event.target.value)} onPaste={handlePaste}
       onKeyDown={event => { if ((event.metaKey || event.ctrlKey) && event.key === 'Enter') { event.preventDefault(); w.save(); } }} />
     <p id="editor-help" className="shortcut">支援 Swagger 2.0 / OpenAPI 3.0、3.1<span>⌘ / Ctrl + Enter</span></p>
-    <button id="render" className="button render-button" type="button" disabled={w.busy} onClick={() => w.save()}>儲存並更新文件</button>
+    {w.selectedId && w.session.user && <label className="version-note-input">版本說明（選填）<input value={w.versionNote} maxLength={200} disabled={w.busy} onChange={event => w.setVersionNote(event.target.value)} placeholder="例如：新增會員查詢端點" /></label>}
+    <button id="render" className="button render-button" type="button" disabled={w.busy} onClick={() => w.save()}>{w.selectedId && w.session.user ? `儲存新版本（目前 v${w.currentVersion}）` : '儲存並更新文件'}</button>
+    {w.selectedId && w.session.user && <button type="button" className="text-button save-copy" disabled={w.busy} onClick={() => w.save(w.editor, true)}>另存為新文件</button>}
     <div id="status" className="status" role="status" aria-live="polite">{w.status}</div>
     {w.error && <div id="error" className="error" role="alert">{w.error}</div>}
     <p className="local-note">登入後，上傳或貼上文件會保存到你的個人歷史。外部參照及「Try it out」會連線至文件指定的網址。</p>

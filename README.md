@@ -13,9 +13,9 @@
 ## 新增功能
 
 - Google 登入：Auth.js Core + Google Provider + 官方 D1 adapter，資料庫 session。
-- 使用者登入後，每次上傳、貼上有效的 YAML 或按儲存／載入範例，都建立獨立紀錄。
+- 使用者登入後，每次上傳、貼上有效的 YAML 或載入範例，都建立獨立紀錄。開啟文件後按儲存會新增該文件的版本，也可另存為新文件。
 - D1 保存 title、fileName、sourceType、createdAt、updatedAt 及擁有者；R2 保存原始內容。
-- 個人歷史可分頁、重新整理、重新開啟、刪除。重新開啟不會新增紀錄，編輯後儲存會新增。
+- 個人歷史可分頁、重新整理、重新開啟、刪除。重新開啟不會新增紀錄，編輯後儲存會新增版本。
 - 未登入可使用原有預覽；介面會明確提示未儲存。個人文件 API 拒絕匿名存取。
 - 查詢、讀取、刪除使用由伺服器驗證的 session user id；R2 存取前必須通過 D1 ownership 查詢。忽略客戶端傳入的 user id。
 - 寫入及刪除驗證 Origin，Auth.js 處理 CSRF、state、PKCE、nonce、Google 回傳身份。只允許 email_verified 的 Google 帳號。
@@ -122,3 +122,14 @@ npm audit --omit=dev
 - 無效 UTF-8 回傳 400；設定 API 在串流讀取時套用 16 KiB 上限。
 - 所有 workbench 請求共用 session 失效邊界，登入過期或登出後忽略之前較慢回來的私人資料。
 - 27 項自動測試通過；正式依賴 `npm audit --omit=dev` 為 0 個已知漏洞。本次未變更資料庫 schema 或 Google OAuth 設定。
+
+## 版本歷史與匯出
+
+- 開啟文件後「儲存新版本」會保留原始內容、檔名、API 標題、時間及選填說明。「另存為新文件」仍建立獨立紀錄；貼上、上傳、範例匯入維持新增文件。
+- 預覽上方「版本歷史」可分頁讀取、檢視、選擇任意兩版逐行比較，以及將舊版還原為新版本。摘要只比較端點/API 版本，不能當成完整破壞性變更檢查。
+- 版本為 D1 metadata + 不可變的獨立 R2 object。舊文件第一次使用版本功能時，保留其原 object 作為 v1；migration 僅新增 schema，不改寫既有文件。
+- 儲存與還原須提供目前版本，D1 原子批次檢查版本號。競爭寫入回傳 409，保留編輯內容。刪除文件會刪除全部歷史版本與 blobs。
+- API：GET /api/documents/:id/versions?offset=0、GET /api/documents/:id/versions/:version、PUT /api/documents/:id/content（x-expected-version、選填 x-version-note）、POST /api/documents/:id/restore（version、expectedVersion）。全部依登入 session 檢查 ownership，寫入驗證 Origin。
+- 「下載／匯出」匯出目前已呈現的預覽；未套用的編輯不包含在內。版本視窗可下載所選歷史版本。原始檔逐字保留註解與格式；JSON 由解析後定義產生；HTML 為自包含唯讀文件，含端點、模型與完整 JSON，沒有遠端 scripts、CDN、網路請求或 API 執行功能。外部 refs 保留文字，未下載內容。
+- 大於合計 800,000 字元或 12,000 行、超過差異計算上限的比較會提示下載後本機比較。版本原始內容畫面最多顯示 500,000 字元，下載保留完整檔案。
+- 新增 0002 migration；既有 migrations 不變。測試涵蓋舊文件初始版本、並行寫入、還原、跨帳號版本拒絕、重啟保存、完整刪除及匯出注入防護。

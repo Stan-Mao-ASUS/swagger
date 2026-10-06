@@ -155,12 +155,65 @@ test('durable documents, Auth.js database sessions, ownership and CSRF', async t
     assert.equal((await request(route + '/restore', tokenA, 'POST', JSON.stringify({ version: 1, expectedVersion: 3 }))).status, 409);
     assert.equal((await request(route + '/restore', tokenA, 'POST', JSON.stringify({ version: 1, expectedVersion: 4 }), { origin: 'https://attacker.example' })).status, 403);
   });
+  let sharedId;
+  await t.test('sharing requires explicit owner publication; only a fixed version becomes public', async () => {
+    const route = '/api/documents/' + ids[2] + '/publication';
+    assert.deepEqual((await (await request('/api/shared', null)).json()).publications, []);
+    assert.equal((await request(route, null)).status, 401);
+    assert.equal((await request(route, tokenB)).status, 404);
+    const payload = { version: 1, title: '公開測試 API', summary: '只分享這個版本', confirmPublic: true };
+    assert.equal((await request(route, tokenB, 'PUT', JSON.stringify(payload))).status, 404);
+    assert.equal((await request(route, tokenA, 'PUT', JSON.stringify({ ...payload, confirmPublic: false }))).status, 400);
+    assert.equal((await request(route, tokenA, 'PUT', JSON.stringify({ ...payload, userId: bob.id }))).status, 400);
+    assert.equal((await request(route, tokenA, 'PUT', JSON.stringify({ ...payload, version: 999 }))).status, 404);
+    assert.equal((await request(route, tokenA, 'PUT', JSON.stringify(payload), { origin: 'https://attacker.example' })).status, 403);
+    // Existing pre-version-feature documents can be published without changing their original bytes.
+    await db.prepare('DELETE FROM document_versions WHERE document_id = ?').bind(ids[2]).run();
+    const published = await request(route, tokenA, 'PUT', JSON.stringify(payload));
+    assert.equal(published.status, 200); sharedId = (await published.json()).publication.id;
+    const publicData = (await (await request('/api/shared/' + sharedId, null)).json()).publication;
+    assert.equal(publicData.source, yaml); assert.equal(publicData.title, payload.title); assert.equal(publicData.version, 1);
+    assert.deepEqual(Object.keys(publicData).sort(), ['id','version','title','summary','createdAt','updatedAt','fileName','source'].sort());
+    for (const token of [null, tokenB]) {
+      assert.equal((await (await request('/api/shared?q=' + encodeURIComponent('公開測試'), token)).json()).publications.length, 1);
+      assert.equal((await request('/api/shared/' + sharedId, token, 'DELETE')).status, 405);
+      assert.equal((await request('/api/documents/' + ids[2] + '/versions/1', token)).status, token ? 404 : 401);
+    }
+    const newSource = yaml.replace('Private test API', 'New PRIVATE draft');
+    assert.equal((await request('/api/documents/' + ids[2] + '/content', tokenA, 'PUT', newSource, { 'x-expected-version': '1', 'x-version-note': 'private-note' })).status, 201);
+    assert.equal((await (await request('/api/shared/' + sharedId, null)).json()).publication.source, yaml);
+    await request('/api/documents/' + ids[2], tokenA, 'PATCH', JSON.stringify({ displayName: 'Private name' }));
+    assert.equal((await (await request('/api/shared/' + sharedId, null)).json()).publication.title, payload.title);
+    const update = await request(route, tokenA, 'PUT', JSON.stringify({ ...payload, version: 2 }));
+    assert.equal((await update.json()).publication.id, sharedId);
+    assert.equal((await (await request('/api/shared/' + sharedId, null)).json()).publication.source, newSource);
+    assert.equal((await request('/api/shared/' + ids[2], null)).status, 404);
+    assert.equal((await request('/api/shared/' + sharedId + '/versions/1', null)).status, 404);
+  });
+  await t.test('revocation invalidates old links; deleting or tombstoning hides a publication', async () => {
+    const route = '/api/documents/' + ids[2] + '/publication';
+    assert.equal((await request(route, tokenB, 'DELETE')).status, 404);
+    assert.equal((await request(route, tokenA, 'DELETE')).status, 200);
+    assert.equal((await request('/api/shared/' + sharedId, null)).status, 404);
+    assert.deepEqual((await (await request('/api/shared', null)).json()).publications, []);
+    const again = await request(route, tokenA, 'PUT', JSON.stringify({ version: 1, title: '重新發布', confirmPublic: true }));
+    const nextId = (await again.json()).publication.id; assert.notEqual(nextId, sharedId);
+    assert.equal((await request('/api/shared/' + sharedId, null)).status, 404);
+    await db.prepare('UPDATE documents SET deleted_at = ? WHERE id = ?').bind(new Date().toISOString(), ids[2]).run();
+    assert.equal((await request('/api/shared/' + nextId, null)).status, 404);
+    assert.deepEqual((await (await request('/api/shared', null)).json()).publications, []);
+    await db.prepare('UPDATE documents SET deleted_at = NULL WHERE id = ?').bind(ids[2]).run();
+    await request(route, tokenA, 'DELETE');
+    const deletionTarget = await request('/api/documents/' + ids[0] + '/publication', tokenA, 'PUT', JSON.stringify({ version: 1, title: '待刪除測試', confirmPublic: true }));
+    sharedId = (await deletionTarget.json()).publication.id;
+  });
   await t.test('refresh and process restart retain metadata and original YAML', async () => {
     assert.equal((await (await request('/api/documents/' + ids[1], tokenA)).json()).document.source, yaml);
     await mf.dispose(); mf = new Miniflare(options); db = await mf.getD1Database('DB'); adapter = D1Adapter(db);
     const response = await request('/api/documents', tokenA); assert.equal(response.status, 200);
     assert.equal((await response.json()).documents.length, 3);
     assert.equal((await (await request('/api/documents/' + ids[0] + '/versions', tokenA)).json()).versions.length, 4);
+    assert.equal((await (await request('/api/shared/' + sharedId, null)).json()).publication.source, yaml);
     assert.equal((await (await request('/api/documents/' + ids[1], tokenA)).json()).document.source, yaml);
   });
   await t.test('a new session for the same account retains history', async () => {
@@ -189,6 +242,8 @@ test('durable documents, Auth.js database sessions, ownership and CSRF', async t
     for (const version of keys) assert.equal(await bucket.get(version.object_key), null);
     assert.equal((await db.prepare('SELECT * FROM document_versions WHERE document_id = ?').bind(ids[0]).all()).results.length, 0);
     assert.equal((await request('/api/documents/' + ids[0] + '/versions/1', tokenA)).status, 404);
+    assert.equal((await request('/api/shared/' + sharedId, null)).status, 404);
+    assert.equal(await db.prepare('SELECT id FROM publications WHERE document_id = ?').bind(ids[0]).first(), null);
   });
   await t.test('Auth.js sign-out checks CSRF and revokes the database session', async () => {
     const csrfResponse = await request('/api/auth/csrf', tokenB); const { csrfToken } = await csrfResponse.json();

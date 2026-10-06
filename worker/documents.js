@@ -121,7 +121,7 @@ export function validName(value, max = 80) {
 
 // Legacy documents keep their existing R2 object as v1. Snapshot one document lazily;
 // no bulk backfill or blob copying is needed during deployment.
-function initialVersion(db, id, userId) {
+export function initialVersion(db, id, userId) {
   return db.prepare(`INSERT OR IGNORE INTO document_versions (document_id, version, title, file_name, object_key, created_at, note)
     SELECT id, 1, title, file_name, object_key, created_at, '初次匯入' FROM documents
     WHERE id = ? AND user_id = ? AND deleted_at IS NULL AND current_version = 1`).bind(id, userId);

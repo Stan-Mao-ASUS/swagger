@@ -6,7 +6,11 @@ import { MAX_BYTES, parseDefinition, endpointCount, formatError } from '../lib/o
 
 const exampleDraft = () => ({ source: example, fileName: 'petstore-example.yaml', sourceType: 'import' });
 const previewFor = draft => ({ spec: parseDefinition(draft.source), fileName: draft.fileName, source: draft.source });
-const selectUrl = id => window.history.replaceState(null, '', id ? '?doc=' + encodeURIComponent(id) : '/');
+const selectUrl = id => {
+  const query = new URLSearchParams(window.location.search);
+  if (query.has('share') || query.get('view') === 'shared') return;
+  window.history.replaceState(null, '', id ? '?doc=' + encodeURIComponent(id) : '/');
+};
 
 export function useWorkbench() {
   const [editor, setEditor] = useState(exampleDraft);

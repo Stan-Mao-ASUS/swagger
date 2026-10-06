@@ -133,3 +133,13 @@ npm audit --omit=dev
 - 「下載／匯出」匯出目前已呈現的預覽；未套用的編輯不包含在內。版本視窗可下載所選歷史版本。原始檔逐字保留註解與格式；JSON 由解析後定義產生；HTML 為自包含唯讀文件，含端點、模型與完整 JSON，沒有遠端 scripts、CDN、網路請求或 API 執行功能。外部 refs 保留文字，未下載內容。
 - 大於合計 800,000 字元或 12,000 行、超過差異計算上限的比較會提示下載後本機比較。版本原始內容畫面最多顯示 500,000 字元，下載保留完整檔案。
 - 新增 0002 migration；既有 migrations 不變。測試涵蓋舊文件初始版本、並行寫入、還原、跨帳號版本拒絕、重啟保存、完整刪除及匯出注入防護。
+
+## 分享區
+
+- 導覽列「分享區」讓所有訪客搜尋及唯讀瀏覽明確發布的文件。獨立網址使用 `/?share=<publication-id>`；分享區使用 `/?view=shared`。未發布文件保持私人。
+- 擁有者開啟自己的文件後，按「發布到分享區」，選擇已儲存版本、公開標題及選填說明，確認完整內容後發布。公開資料包含所選版本的原始 YAML/JSON 和檔名；不包含私人文件 ID、分類、其他版本、版本備註或 Google 個人資料。
+- 公開內容固定指向不可變版本。後續儲存、還原或修改私人名稱不會自動改動公開資料；再次按「更新分享內容」才會更新，連結保持相同。
+- 撤下會使原連結失效；重新發布會建立新連結。删除或 tombstone 文件時，分享立即無法讀取，正常刪除完成後 publication metadata 一併移除。撤下不能收回讀者已儲存的副本。
+- GET `/api/shared`（q、offset）、GET `/api/shared/:publicationId` 可匿名讀取，回應明確列出公開欄位且 no-store。分享頁停用 API Try it out，提供既有三種匯出格式。
+- GET/PUT/DELETE `/api/documents/:id/publication` 必須通過 session ownership；PUT 要求 version、title、選填 summary 及 confirmPublic=true。新增/更新 SQL 本身再次驗證該版本與文件 ownership、未刪除狀態；所有寫入保留 Origin 檢查。既有私人文件與版本 API 維持 owner-only。
+- 0003 migration 僅新增 publications 表與索引，不會將既有文件公開。33 項自動測試涵蓋主動發布、指定版本、私人資料拒絕、撤下、重新發布、重啟保存與文件刪除連動。

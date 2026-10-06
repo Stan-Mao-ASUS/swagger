@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { useTheme } from './ThemeProvider.jsx';
-export function AccountBar({ session, busy, onSignOut, onLibrary }) {
+export function AccountBar({ session, busy, onSignOut, onLibrary, shared, onWorkspace, onShared }) {
   const menu = useRef(null); const trigger = useRef(null);
   const [imageFailed, setImageFailed] = useState(false);
   const appearance = useTheme(); const user = session.user;
@@ -13,6 +13,7 @@ export function AccountBar({ session, busy, onSignOut, onLibrary }) {
   }, []);
   return <header className="topbar">
     <a className="brand" href="./"><span className="brand-icon" aria-hidden="true">{'{ }'}</span><span>Swagger <strong>YAML Viewer</strong></span></a>
+    <nav className="workspace-nav" aria-label="主要導覽"><button type="button" aria-current={!shared ? 'page' : undefined} onClick={onWorkspace}>工作台</button><button type="button" aria-current={shared ? 'page' : undefined} onClick={onShared}>分享區</button></nav>
     <div className="account">
       {session.loading ? <span>讀取登入狀態…</span> : user ? <details className="account-menu" ref={menu}>
         <summary ref={trigger} aria-label="開啟帳號選單" title="帳號與外觀設定"><span className="avatar">{user.image && !imageFailed ? <img src={user.image} alt="" referrerPolicy="no-referrer" onError={() => setImageFailed(true)} /> : (user.name || user.email || '?').slice(0, 1).toUpperCase()}</span><span className="account-label">{user.name || '我的帳號'}</span><span aria-hidden="true">⌄</span></summary>

@@ -31,3 +31,8 @@ export const documentVersions = sqliteTable('document_versions', {
   version: integer('version').notNull(), title: text('title').notNull(), fileName: text('file_name').notNull(),
   objectKey: text('object_key').notNull().unique(), createdAt: text('created_at').notNull(), note: text('note').notNull().default(''),
 }, table => [primaryKey({ columns: [table.documentId, table.version] })]);
+export const publications = sqliteTable('publications', {
+  id: text('id').primaryKey(), documentId: text('document_id').notNull().unique().references(() => documents.id, { onDelete: 'cascade' }),
+  version: integer('version').notNull(), title: text('title').notNull(), summary: text('summary').notNull().default(''),
+  createdAt: text('created_at').notNull(), updatedAt: text('updated_at').notNull(),
+}, table => [index('idx_publications_updated').on(table.updatedAt, table.id)]);

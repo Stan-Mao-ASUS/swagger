@@ -20,5 +20,6 @@ test('additive library migration preserves existing document metadata and nullab
     await db.prepare("DELETE FROM categories WHERE id = 'category'").run();
     assert.equal((await db.prepare("SELECT category_id FROM documents WHERE id = 'legacy-doc'").first()).category_id, null);
     assert.deepEqual((await db.prepare('PRAGMA foreign_key_check').all()).results, []);
+    assert.deepEqual((await db.prepare('SELECT * FROM publications').all()).results, []);
   } finally { await mf.dispose(); }
 });

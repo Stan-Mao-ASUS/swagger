@@ -55,6 +55,7 @@ test('durable documents, Auth.js database sessions, ownership and CSRF', async t
     assert.equal((await request('/api/documents', tokenA, 'POST', yaml, { origin: 'https://attacker.example' })).status, 403);
     assert.equal((await request('/api/documents/' + ids[0], tokenA, 'DELETE', undefined, { origin: '' })).status, 403);
     assert.equal((await request('/api/documents', tokenA, 'POST', 'not: openapi')).status, 400);
+    assert.equal((await request('/api/documents', tokenA, 'POST', yaml.replace('paths: {}', 'paths:\n  /pets/{id}:\n    get:\n      responses:\n        200:\n          description: ok'))).status, 400);
     assert.equal((await request('/api/documents', tokenA, 'POST', yaml, { 'x-source-type': 'invalid' })).status, 400);
     assert.equal((await request('/api/documents', tokenA, 'POST', 'x'.repeat(5 * 1024 * 1024 + 1))).status, 413);
   });
@@ -173,7 +174,7 @@ test('durable documents, Auth.js database sessions, ownership and CSRF', async t
     assert.equal(published.status, 200); sharedId = (await published.json()).publication.id;
     const publicData = (await (await request('/api/shared/' + sharedId, null)).json()).publication;
     assert.equal(publicData.source, yaml); assert.equal(publicData.title, payload.title); assert.equal(publicData.version, 1);
-    assert.deepEqual(Object.keys(publicData).sort(), ['id','version','title','summary','createdAt','updatedAt','fileName','source'].sort());
+    assert.deepEqual(Object.keys(publicData).sort(), ['id','version','title','summary','createdAt','updatedAt','fileName','source','visibility','expiresAt'].sort());
     for (const token of [null, tokenB]) {
       assert.equal((await (await request('/api/shared?q=' + encodeURIComponent('公開測試'), token)).json()).publications.length, 1);
       assert.equal((await request('/api/shared/' + sharedId, token, 'DELETE')).status, 405);
@@ -207,6 +208,52 @@ test('durable documents, Auth.js database sessions, ownership and CSRF', async t
     const deletionTarget = await request('/api/documents/' + ids[0] + '/publication', tokenA, 'PUT', JSON.stringify({ version: 1, title: '待刪除測試', confirmPublic: true }));
     sharedId = (await deletionTarget.json()).publication.id;
   });
+  await t.test('unlisted links, expiry, audience changes and rotation are enforced on the server', async () => {
+    const base = '/api/documents/' + ids[2] + '/publication';
+    const publish = async extra => {
+      const response = await request(base, tokenA, 'PUT', JSON.stringify({ version: 1, title: 'Scoped share', summary: 'secret gallery word', confirmPublic: true, ...extra }));
+      assert.equal(response.status, 200); return (await response.json()).publication;
+    };
+    const first = await publish({ visibility: 'public' });
+    const hidden = await publish({ visibility: 'unlisted', expiresAt: new Date(Date.now() + 86400000).toISOString() });
+    assert.notEqual(first.id, hidden.id);
+    assert.equal((await request('/api/shared/' + first.id, null)).status, 404);
+    assert.equal((await request('/api/shared/' + hidden.id, null)).status, 200);
+    for (const query of ['', '?q=Scoped', '?q=secret']) assert.ok(!(await (await request('/api/shared' + query, null)).json()).publications.some(p => p.id === hidden.id));
+    assert.equal((await request(base, tokenB, 'PUT', JSON.stringify({ version: 1, title: 'steal', confirmPublic: true, visibility: 'public' }))).status, 404);
+    const rotated = await publish({ visibility: 'unlisted', rotateLink: true });
+    assert.notEqual(rotated.id, hidden.id);
+    assert.equal((await request('/api/shared/' + hidden.id, null)).status, 404);
+    await db.prepare('UPDATE publications SET expires_at = ? WHERE id = ?').bind('2000-01-01T00:00:00.000Z', rotated.id).run();
+    assert.equal((await request('/api/shared/' + rotated.id, null)).status, 404);
+    const renewed = await publish({ visibility: 'unlisted' });
+    assert.notEqual(renewed.id, rotated.id);
+    for (const expiresAt of ['bad', '2000-01-01T00:00:00.000Z', '2027-02-30T00:00:00.000Z']) assert.equal((await request(base, tokenA, 'PUT', JSON.stringify({ version: 1, title: 'bad', confirmPublic: true, expiresAt }))).status, 400);
+    assert.equal((await request(base, tokenA, 'DELETE')).status, 200);
+    assert.equal((await request('/api/shared/' + renewed.id, null)).status, 404);
+  });
+  await t.test('cloud drafts accept unfinished YAML, enforce ownership and reject stale writes', async () => {
+    const route = '/api/drafts/' + ids[0];
+    const put = (text, revision, token = tokenA) => request(route, token, 'PUT', text, { 'x-draft-revision': String(revision), 'x-base-version': '1' });
+    assert.equal((await request(route, null)).status, 401);
+    assert.equal((await put('stolen', 0, tokenB)).status, 404);
+    assert.equal((await request(route, tokenB, 'DELETE', undefined, { 'x-draft-revision': '0' })).status, 404);
+    const before = (await (await request('/api/documents/' + ids[0], tokenA)).json()).document;
+    assert.equal((await put('unfinished: [', 0)).status, 200);
+    assert.equal((await put('old tab', 0)).status, 409);
+    let data = await (await request(route, tokenA)).json();
+    assert.equal(data.draft.source, 'unfinished: ['); assert.equal(data.revision, 1);
+    assert.equal((await (await request('/api/documents/' + ids[0], tokenA)).json()).document.currentVersion, before.currentVersion);
+    const race = await Promise.all([put('race A', 1), put('race B', 1)]);
+    assert.deepEqual(race.map(r => r.status).sort(), [200,409]);
+    assert.equal((await request(route, tokenA, 'DELETE', undefined, { 'x-draft-revision': '1' })).status, 409);
+    assert.equal((await request(route, tokenA, 'DELETE', undefined, { 'x-draft-revision': '2' })).status, 200);
+    assert.equal((await put('stale resurrection', 0)).status, 409);
+    assert.equal((await put('restart draft', 3)).status, 200);
+    assert.equal((await request('/api/drafts/new', tokenA, 'PUT', 'new draft', { 'x-draft-revision': '0' })).status, 200);
+    assert.equal((await (await request('/api/drafts/new', tokenB)).json()).draft, null);
+    assert.equal((await request('/api/drafts/new', tokenA, 'PUT', 'x'.repeat(5 * 1024 * 1024 + 1), { 'x-draft-revision': '1' })).status, 413);
+  });
   await t.test('refresh and process restart retain metadata and original YAML', async () => {
     assert.equal((await (await request('/api/documents/' + ids[1], tokenA)).json()).document.source, yaml);
     await mf.dispose(); mf = new Miniflare(options); db = await mf.getD1Database('DB'); adapter = D1Adapter(db);
@@ -215,6 +262,9 @@ test('durable documents, Auth.js database sessions, ownership and CSRF', async t
     assert.equal((await (await request('/api/documents/' + ids[0] + '/versions', tokenA)).json()).versions.length, 4);
     assert.equal((await (await request('/api/shared/' + sharedId, null)).json()).publication.source, yaml);
     assert.equal((await (await request('/api/documents/' + ids[1], tokenA)).json()).document.source, yaml);
+  });
+  await t.test('cloud draft persists across process restart', async () => {
+    assert.equal((await (await request('/api/drafts/' + ids[0], tokenA)).json()).draft.source, 'restart draft');
   });
   await t.test('a new session for the same account retains history', async () => {
     await adapter.deleteSession(tokenA);
@@ -234,7 +284,7 @@ test('durable documents, Auth.js database sessions, ownership and CSRF', async t
   });
   await t.test('delete removes both metadata and object storage', async () => {
     const row = await db.prepare('SELECT object_key FROM documents WHERE id = ?').bind(ids[0]).first();
-    const keys = (await db.prepare('SELECT object_key FROM document_versions WHERE document_id = ?').bind(ids[0]).all()).results;
+    const keys = (await db.prepare('SELECT object_key FROM document_versions WHERE document_id = ? UNION SELECT object_key FROM drafts WHERE document_id = ? AND object_key IS NOT NULL').bind(ids[0], ids[0]).all()).results;
     assert.equal((await request('/api/documents/' + ids[0], tokenA, 'DELETE')).status, 200);
     assert.equal((await request('/api/documents/' + ids[0], tokenA)).status, 404);
     assert.equal(await db.prepare('SELECT id FROM documents WHERE id = ?').bind(ids[0]).first(), null);
@@ -242,6 +292,8 @@ test('durable documents, Auth.js database sessions, ownership and CSRF', async t
     for (const version of keys) assert.equal(await bucket.get(version.object_key), null);
     assert.equal((await db.prepare('SELECT * FROM document_versions WHERE document_id = ?').bind(ids[0]).all()).results.length, 0);
     assert.equal((await request('/api/documents/' + ids[0] + '/versions/1', tokenA)).status, 404);
+    assert.equal((await request('/api/drafts/' + ids[0], tokenA)).status, 404);
+    assert.equal((await db.prepare('SELECT * FROM drafts WHERE document_id = ?').bind(ids[0]).all()).results.length, 0);
     assert.equal((await request('/api/shared/' + sharedId, null)).status, 404);
     assert.equal(await db.prepare('SELECT id FROM publications WHERE document_id = ?').bind(ids[0]).first(), null);
   });

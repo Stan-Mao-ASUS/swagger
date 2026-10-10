@@ -29,6 +29,20 @@
       "when": 1791291073157,
       "tag": "0003_robust_angel",
       "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "6",
+      "when": 1791651819831,
+      "tag": "0004_nappy_tinkerer",
+      "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "6",
+      "when": 1791651935245,
+      "tag": "0005_wild_ken_ellis",
+      "breakpoints": true
     }
   ]
 }

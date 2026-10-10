@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
-import { analyzeSource, convertSource } from '../lib/editor.js';
+import { convertSource } from '../lib/editor.js';
+import { useCloudDraft } from './useCloudDraft.js';
 import { example } from '../example.js';
 import { api } from '../lib/api.js';
 import { createSessionClient } from '../lib/session-client.js';
@@ -14,6 +15,8 @@ const selectUrl = id => {
 };
 
 export function useWorkbench() {
+  const [initialized, setInitialized] = useState(false);
+  const [draftBaseVersion, setDraftBaseVersion] = useState(null);
   const [editor, setEditor] = useState(exampleDraft);
   const [preview, setPreview] = useState(() => previewFor(exampleDraft()));
   const [diagnostics, setDiagnostics] = useState([]);
@@ -55,7 +58,7 @@ export function useWorkbench() {
           if (!active) return;
           const draft = { source: document.source, fileName: document.fileName, sourceType: document.sourceType };
           const nextPreview = previewFor(draft);
-          setEditor(draft); setSavedSource(draft.source); setPreview(nextPreview); setSelectedId(document.id); setCurrentVersion(document.currentVersion); setVersionNote('');
+          setHasEdits(false); setDraftBaseVersion(null); setEditor(draft); setSavedSource(draft.source); setPreview(nextPreview); setSelectedId(document.id); setCurrentVersion(document.currentVersion); setVersionNote('');
           setStatus('已開啟文件。編輯後可儲存新版本，舊版會保留。');
         }
       } catch (error) {
@@ -66,7 +69,7 @@ export function useWorkbench() {
         } else setSession(previous => ({ ...previous, loading: false }));
         setError(formatError(error));
       } finally {
-        if (active) { pending.current = false; setBusy(false); }
+        if (active) { setInitialized(true); pending.current = false; setBusy(false); }
       }
     }
     initialize();
@@ -83,23 +86,33 @@ export function useWorkbench() {
     };
   }, []);
 
-  // Editing updates the preview without creating a version on every keystroke.
+  const validatorWorker = useRef(null), validationSequence = useRef(0);
+  useEffect(() => {
+    const worker = new Worker('/validation-worker.js'); validatorWorker.current = worker;
+    return () => { worker.terminate(); validatorWorker.current = null; };
+  }, []);
   useEffect(() => {
     setValidating(true);
-    const timer = setTimeout(() => {
-      const result = analyzeSource(editor.source);
-      setDiagnostics(result.diagnostics);
+    const id = ++validationSequence.current, worker = validatorWorker.current;
+    const receive = event => {
+      if (event.data.id !== id) return;
+      const result = event.data.result; setDiagnostics(result.diagnostics);
       if (result.spec) setPreview({ spec: result.spec, source: editor.source, fileName: editor.fileName });
       setValidating(false);
-    }, 350);
-    return () => clearTimeout(timer);
+    };
+    const failed = () => { setDiagnostics([{ line: 1, column: 1, severity: 'error', message: '驗證元件載入失敗，請重新整理。' }]); setValidating(false); };
+    worker.addEventListener('message', receive); worker.addEventListener('error', failed);
+    const timer = setTimeout(() => worker.postMessage({ id, source: editor.source }), 350);
+    return () => { clearTimeout(timer); worker.removeEventListener('message', receive); worker.removeEventListener('error', failed); };
   }, [editor]);
   const dirty = editor.source !== savedSource;
+  const cloudDraft = useCloudDraft({ userId: session.user?.id, documentId: selectedId, initialized, editor, baseVersion: draftBaseVersion || currentVersion, changed: hasEdits, request,
+    restore: draft => { setEditor({ source: draft.source, fileName: draft.fileName, sourceType: draft.sourceType }); setDraftBaseVersion(draft.baseVersion); setHasEdits(true); setStatus('已恢復草稿；儲存後才建立正式版本。'); } });
   useEffect(() => {
-    const leave = event => { if (dirty && hasEdits) { event.preventDefault(); event.returnValue = ''; } };
+    const leave = event => { if (hasEdits && cloudDraft.unsynced) { event.preventDefault(); event.returnValue = ''; } };
     window.addEventListener('beforeunload', leave);
     return () => window.removeEventListener('beforeunload', leave);
-  }, [dirty, hasEdits]);
+  }, [dirty, hasEdits, cloudDraft.unsynced]);
 
   function convert(format) {
     try { changeSource(convertSource(editor.source, format)); }
@@ -109,7 +122,7 @@ export function useWorkbench() {
   function clearPrivateView() {
     setSession(previous => ({ ...previous, user: null }));
     setItems([]); setNextOffset(null); setSelectedId(null); setCurrentVersion(null); setVersionNote(''); setHistoryError('');
-    setHasEdits(false); setEditor(exampleDraft()); setSavedSource(null); setPreview(null); selectUrl(null);
+    setDraftBaseVersion(null); setHasEdits(false); setEditor(exampleDraft()); setSavedSource(null); setPreview(null); selectUrl(null);
   }
 
   function request(path, options) {
@@ -130,7 +143,7 @@ export function useWorkbench() {
     setNextOffset(data.nextOffset); setHistoryError('');
   }
 
-  async function persist(draft, newVersion = false) {
+  async function persist(draft, newVersion = false, clearDraft = false) {
     const nextPreview = previewFor(draft);
     setPreview(nextPreview);
     setStatus(`已載入 ${endpointCount(nextPreview.spec)} 個 API 端點`);
@@ -140,9 +153,10 @@ export function useWorkbench() {
     }
     setStatus('正在儲存…');
     const data = await request(newVersion ? `/api/documents/${selectedId}/content` : '/api/documents', {
-      method: newVersion ? 'PUT' : 'POST', headers: { ...(newVersion ? { 'x-expected-version': String(currentVersion), 'x-version-note': encodeURIComponent(versionNote) } : {}), 'content-type': 'text/plain; charset=utf-8', 'x-source-type': draft.sourceType, 'x-file-name': encodeURIComponent(draft.fileName) }, body: draft.source,
+      method: newVersion ? 'PUT' : 'POST', headers: { ...(newVersion ? { 'x-expected-version': String(draftBaseVersion || currentVersion), 'x-version-note': encodeURIComponent(versionNote) } : {}), 'content-type': 'text/plain; charset=utf-8', 'x-source-type': draft.sourceType, 'x-file-name': encodeURIComponent(draft.fileName) }, body: draft.source,
     });
-    setSavedSource(draft.source);
+    if (clearDraft) await cloudDraft.clearSaved(draft.source).catch(() => {});
+    setHasEdits(false); setDraftBaseVersion(null); setSavedSource(draft.source);
     setSelectedId(data.document.id); setCurrentVersion(data.document.currentVersion); setVersionNote(''); selectUrl(data.document.id);
     setStatus(`已儲存 v${data.document.currentVersion}，重新整理後仍可開啟。`);
     try { await fetchHistory(); }
@@ -153,7 +167,8 @@ export function useWorkbench() {
   }
 
   function save(draft = editor, asNew = false) {
-    return run(() => persist(draft, !asNew && !!selectedId), '尚未確認儲存。請先重新整理歷史確認；編輯區內容已保留。');
+    if (!cloudDraft.ready) return setError('請先恢復或捨棄雲端草稿。');
+    return run(() => persist(draft, !asNew && !!selectedId, true), '尚未確認儲存。請先重新整理歷史確認；編輯區內容已保留。');
   }
 
   function changeSource(source) {
@@ -164,47 +179,52 @@ export function useWorkbench() {
   }
 
   function pasteSource(source) {
-    if (pending.current) return;
-    setHasEdits(true);
-    // Even an incomplete paste starts a new document; repairing it must never overwrite the previous one.
-    setSelectedId(null); setCurrentVersion(null); setSavedSource(null); setVersionNote(''); selectUrl(null);
-    const draft = { source, fileName: 'pasted-api.yaml', sourceType: 'paste' };
-    setEditor(draft);
-    return save(draft, true);
+    return run(async () => {
+      await cloudDraft.flush();
+      setHasEdits(true); setDraftBaseVersion(null);
+      setSelectedId(null); setCurrentVersion(null); setSavedSource(null); setVersionNote(''); selectUrl(null);
+      const draft = { source, fileName: 'pasted-api.yaml', sourceType: 'paste' };
+      setEditor(draft); await persist(draft);
+    });
   }
 
   function importExample() {
     if (pending.current) return;
-    const draft = exampleDraft(); setEditor(draft); return save(draft, true);
+    return run(async () => { await cloudDraft.flush(); const draft = exampleDraft(); setHasEdits(true); setDraftBaseVersion(null); setSelectedId(null); setCurrentVersion(null); setSavedSource(null); selectUrl(null); setEditor(draft); await persist(draft); });
   }
 
   function loadFile(file) {
     if (!file) return;
     return run(async () => {
+      await cloudDraft.flush();
       if (!/\.(ya?ml|json)$/i.test(file.name)) throw new Error('請選擇 .yaml、.yml 或 .json 檔案。');
       if (file.size > MAX_BYTES) throw new Error('檔案過大，請使用 5 MB 以內的文件。');
       const draft = { source: await file.text(), fileName: file.name, sourceType: 'upload' };
-      setSelectedId(null); setCurrentVersion(null); setSavedSource(null); setVersionNote(''); setHasEdits(true); selectUrl(null);
+      setSelectedId(null); setCurrentVersion(null); setSavedSource(null); setVersionNote(''); setDraftBaseVersion(null); setHasEdits(true); selectUrl(null);
       setEditor(draft); await persist(draft);
     });
   }
 
   function openDocument(id) {
     return run(async () => {
+      await cloudDraft.flush();
       const { document } = await request('/api/documents/' + encodeURIComponent(id));
       const draft = { source: document.source, fileName: document.fileName, sourceType: document.sourceType };
       const nextPreview = previewFor(draft);
-      setEditor(draft); setSavedSource(draft.source); setPreview(nextPreview); setSelectedId(document.id); setCurrentVersion(document.currentVersion); setVersionNote(''); selectUrl(document.id);
+      setHasEdits(false); setDraftBaseVersion(null); setEditor(draft); setSavedSource(draft.source); setPreview(nextPreview); setSelectedId(document.id); setCurrentVersion(document.currentVersion); setVersionNote(''); selectUrl(document.id);
+      if (id === selectedId) cloudDraft.retry();
       setStatus('已開啟文件。編輯後可儲存新版本，舊版會保留。');
     });
   }
 
   function restoreVersion(version) {
     return run(async () => {
+      await cloudDraft.flush();
       const { document } = await request(`/api/documents/${selectedId}/restore`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ version, expectedVersion: currentVersion }) });
+      await cloudDraft.clearSaved().catch(() => {});
       const restored = await request(`/api/documents/${selectedId}/versions/${document.currentVersion}`);
       const draft = { source: restored.source, fileName: restored.fileName, sourceType: editor.sourceType };
-      setEditor(draft); setSavedSource(draft.source); setPreview(previewFor(draft)); setCurrentVersion(document.currentVersion); setVersionNote('');
+      setHasEdits(false); setDraftBaseVersion(null); setEditor(draft); setSavedSource(draft.source); setPreview(previewFor(draft)); setCurrentVersion(document.currentVersion); setVersionNote('');
       setStatus(`已將 v${version} 還原為 v${document.currentVersion}，所有舊版本仍保留。`);
       try { await fetchHistory(); } catch (error) { if (error.status === 401) throw error; setHistoryError('已還原，請重新整理歷史清單。'); }
     });
@@ -230,6 +250,7 @@ export function useWorkbench() {
 
   function signOut() {
     return run(async () => {
+      await cloudDraft.flush();
       const { csrfToken } = await request('/api/auth/csrf');
       await request('/api/auth/signout', {
         method: 'POST', headers: { 'content-type': 'application/x-www-form-urlencoded', 'x-auth-return-redirect': '1' },
@@ -240,7 +261,7 @@ export function useWorkbench() {
   }
 
   return {
-    editor, preview, diagnostics, validating, dirty, convert, currentVersion, versionNote, setVersionNote, restoreVersion, session, items, nextOffset, selectedId, busy, status: !dirty && status.startsWith('未儲存的變更') ? '目前內容與已儲存版本一致。' : status, error, historyError,
+    editor, preview, cloudDraft, draftBaseVersion, diagnostics, validating, dirty, convert, currentVersion, versionNote, setVersionNote, restoreVersion, session, items, nextOffset, selectedId, busy, status: !dirty && status.startsWith('未儲存的變更') ? '目前內容與已儲存版本一致。' : status, error, historyError,
     request, save, changeSource, pasteSource, importExample, loadFile, openDocument, deleteDocument, signOut,
     refreshHistory: append => session.user && run(() => fetchHistory(append)),
     reportError: message => setError(message),

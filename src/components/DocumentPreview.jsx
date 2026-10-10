@@ -34,11 +34,11 @@ export function DocumentPreview({ preview, workbench, readOnly = false }) {
   const spec = preview?.spec;
   return <section className="document-panel" aria-label="Swagger API 文件">
     <div className="document-toolbar"><div><span className="document-label">文件預覽</span><span id="filename" className="filename">{preview?.fileName || ''}</span></div>
-      {spec && <div className="document-actions"><ExportMenu preview={preview} />{workbench?.selectedId && workbench.session.user && <button className="text-button" disabled={workbench.busy} onClick={() => setVersionsOpen(true)}>版本歷史 · v{workbench.currentVersion}</button>}{workbench?.selectedId && workbench.session.user && <button className="text-button" disabled={workbench.busy} onClick={() => setShareOpen(true)}>發布到分享區</button>}<span id="spec-version" className="version-chip">{spec.swagger ? 'Swagger 2.0' : `OpenAPI ${spec.openapi}`}</span></div>}
+      {spec && <div className="document-actions"><ExportMenu preview={preview} />{workbench?.selectedId && workbench.session.user && <button className="text-button" disabled={workbench.busy} onClick={() => setVersionsOpen(true)}>版本歷史 · v{workbench.currentVersion}</button>}{workbench?.selectedId && workbench.session.user && <button className="text-button" disabled={workbench.busy} onClick={() => setShareOpen(true)}>分享權限</button>}<span id="spec-version" className="version-chip">{spec.swagger ? 'Swagger 2.0' : `OpenAPI ${spec.openapi}`}</span></div>}
     </div>
     {versionsOpen && workbench?.selectedId && workbench.session.user && <VersionHistory key={workbench.selectedId} workbench={workbench} onClose={() => setVersionsOpen(false)} />}
     {shareOpen && workbench?.selectedId && workbench.session.user && <ShareDialog key={workbench.selectedId} workbench={workbench} onClose={() => setShareOpen(false)} />}
-    {workbench && (workbench.validating || workbench.diagnostics.length > 0) && <div className="preview-stale" role="status">{workbench.validating ? '正在更新預覽…' : '編輯內容有錯誤，下方為最後一次有效預覽。'}</div>}
+    {workbench && (workbench.validating || workbench.diagnostics.some(d => d.severity !== 'warning')) && <div className="preview-stale" role="status">{workbench.validating ? '正在更新預覽…' : '編輯內容有錯誤，下方為最後一次有效預覽。'}</div>}
     {workbench?.dirty && workbench.selectedId && <div className="preview-draft-note">預覽包含尚未儲存的變更。分享區仍顯示已發布版本。</div>}
     <SwaggerPreview spec={spec} readOnly={readOnly} />
     <footer className="document-footer">以 <a href="https://swagger.io/tools/swagger-ui/" target="_blank" rel="noopener noreferrer">Swagger UI</a> 呈現 · {readOnly ? '分享文件為唯讀；外部參照可能需要網路連線。' : 'API 測試需目標伺服器允許 CORS；本機檔案請使用完整的伺服器網址。'}</footer>

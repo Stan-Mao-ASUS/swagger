@@ -1,3 +1,4 @@
+import { validateSpec } from '../shared/validation.js';
 import { MAX_BYTES, parseDefinition } from '../shared/openapi.js';
 export { MAX_BYTES };
 export function json(body, status = 200) { return Response.json(body, { status, headers: { 'cache-control': 'private, no-store', 'x-content-type-options': 'nosniff' } }); }
@@ -19,7 +20,7 @@ export async function boundedText(request, limit = MAX_BYTES) {
   catch { throw new HttpError(400, '檔案編碼不正確，請使用 UTF-8。'); }
 }
 function validate(source) {
-  try { return parseDefinition(source).info.title; }
+  try { const spec = parseDefinition(source); const issues = validateSpec(spec).filter(issue => issue.severity === 'error'); if (issues.length) throw new Error(issues[0].path + '：' + issues[0].message); return spec.info.title; }
   catch (error) { throw new HttpError(400, error.mark ? 'YAML 格式錯誤，請修正後再儲存。' : error.message); }
 }
 const columns = 'id, current_version AS currentVersion, title, COALESCE(display_name, title) AS displayName, category_id AS categoryId, file_name AS fileName, source_type AS sourceType, created_at AS createdAt, updated_at AS updatedAt';
@@ -95,7 +96,7 @@ export async function documents(request, env, user) {
     if (request.method === 'DELETE') {
       await db.prepare('UPDATE documents SET deleted_at = ?, updated_at = ? WHERE id = ? AND user_id = ?').bind(new Date().toISOString(), new Date().toISOString(), id, user.id).run();
       // Tombstoning prevents new commits; query keys afterwards to include any commit that won the race.
-      const { results: versions } = await db.prepare('SELECT object_key FROM document_versions WHERE document_id = ? UNION SELECT object_key FROM documents WHERE id = ? AND user_id = ?').bind(id, id, user.id).all();
+      const { results: versions } = await db.prepare('SELECT object_key FROM document_versions WHERE document_id = ? UNION SELECT object_key FROM documents WHERE id = ? AND user_id = ? UNION SELECT object_key FROM drafts WHERE document_id = ? AND user_id = ? AND object_key IS NOT NULL').bind(id, id, user.id, id, user.id).all();
       for (let start = 0; start < versions.length; start += 100) await bucket.delete(versions.slice(start, start + 100).map(version => version.object_key));
       await db.prepare('DELETE FROM documents WHERE id = ? AND user_id = ?').bind(id, user.id).run();
       return json({ deleted: true });

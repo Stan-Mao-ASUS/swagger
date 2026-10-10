@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { analyzeSource, convertSource, completionFor } from '../src/lib/editor.js';
+import { convertSource, completionFor } from '../src/lib/editor.js';
+import { analyzeSource } from '../src/lib/analyze-source.js';
 import { EditorState } from '@codemirror/state';
 import { CompletionContext } from '@codemirror/autocomplete';
 const source = '# keep original\nopenapi: 3.0.3\ninfo:\n  title: Editor test\n  version: "1.0"\npaths: {}\n';
@@ -27,4 +28,41 @@ test('completion suggests YAML keys but not values or comments', () => {
   assert.equal(complete('title: res'), null);
   assert.equal(complete('# res'), null);
   assert.equal(complete('  "res'), null);
+});
+import { validateSpec } from '../shared/validation.js';
+const valid = () => ({ openapi: '3.0.3', info: { title: 'Validation', version: '1' }, paths: { '/pets/{id}': { get: { operationId: 'getPet', parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string' } }], responses: { '200': { description: 'ok' } } } } } });
+test('OpenAPI schema errors and semantic issues carry source positions', () => {
+  const spec = valid(); spec.paths['/pets/{id}'].get.responses = {};
+  assert.ok(validateSpec(spec).some(d => d.path.includes('responses')));
+  const doc = valid(); doc.paths['/other'] = { get: { operationId: 'getPet', responses: { '200': { description: 'ok' } } } };
+  const result = analyzeSource(JSON.stringify(doc, null, 2));
+  assert.equal(result.spec, null);
+  assert.ok(result.diagnostics.some(d => d.message.includes('operationId') && d.line > 1));
+});
+test('references, path parameters, duplicate templates and security names are checked', () => {
+  const spec = valid();
+  spec.paths['/pets/{id}'].get.parameters = [{ name: 'other', in: 'path', required: false, schema: { type: 'string' } }];
+  spec.paths['/pets/{id}'].get.security = [{ missing: [] }];
+  spec.paths['/pets/{name}'] = { get: { responses: { '200': { $ref: '#/components/responses/Missing' } } } };
+  const messages = validateSpec(spec).map(d => d.message).join('\n');
+  for (const text of ['未宣告','不在路徑','required: true','找不到參照','路徑模板','security scheme']) assert.ok(messages.includes(text), text);
+});
+test('ordinary recursive local refs, escaped pointers and example payloads remain valid', () => {
+  const spec = valid(); spec.components = { schemas: { 'A/B': { type: 'object', properties: { next: { $ref: '#/components/schemas/A~1B' } }, example: { $ref: 'not-a-real-reference' } } } };
+  assert.deepEqual(validateSpec(spec), []);
+  spec.components.schemas['A/B'].properties.next.$ref = 'https://example.test/schema.json';
+  const issues = validateSpec(spec); assert.equal(issues.length, 1); assert.equal(issues[0].severity, 'warning');
+});
+test('Swagger 2 and OpenAPI 3.1 schemas are validated, including 2020-12 schema objects', () => {
+  assert.deepEqual(validateSpec({ swagger: '2.0', info: { title: 'API', version: '1' }, paths: {} }), []);
+  const spec = { openapi: '3.1.1', info: { title: 'API', version: '1' }, components: { schemas: { Pet: { type: ['string','null'] } } } };
+  assert.deepEqual(validateSpec(spec), []);
+  spec.components.schemas.Pet.type = 'invalid-type';
+  assert.ok(validateSpec(spec).some(d => d.path.includes('Pet/type')));
+});
+test('a large set of external-reference warnings cannot hide later semantic errors', () => {
+  const spec = valid();
+  spec.components = { schemas: Object.fromEntries(Array.from({ length: 110 }, (_,i) => ['S'+i, { $ref: 'https://example.test/'+i }])) };
+  spec.paths['/pets/{id}'].get.parameters = [];
+  assert.ok(validateSpec(spec).some(d => d.severity === 'error' && d.message.includes('未宣告')));
 });

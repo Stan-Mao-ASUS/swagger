@@ -33,6 +33,13 @@ export const documentVersions = sqliteTable('document_versions', {
 }, table => [primaryKey({ columns: [table.documentId, table.version] })]);
 export const publications = sqliteTable('publications', {
   id: text('id').primaryKey(), documentId: text('document_id').notNull().unique().references(() => documents.id, { onDelete: 'cascade' }),
+  visibility: text('visibility', { enum: ['public', 'unlisted'] }).notNull().default('public'), expiresAt: text('expires_at'),
   version: integer('version').notNull(), title: text('title').notNull(), summary: text('summary').notNull().default(''),
   createdAt: text('created_at').notNull(), updatedAt: text('updated_at').notNull(),
 }, table => [index('idx_publications_updated').on(table.updatedAt, table.id)]);
+export const drafts = sqliteTable('drafts', {
+  userId: text('user_id').notNull().references(() => users.id, { onDelete: 'cascade' }),
+  draftKey: text('draft_key').notNull(), documentId: text('document_id').references(() => documents.id, { onDelete: 'cascade' }),
+  revision: integer('revision').notNull(), objectKey: text('object_key'), fileName: text('file_name').notNull(), sourceType: text('source_type').notNull(),
+  baseVersion: integer('base_version'), updatedAt: text('updated_at').notNull(),
+}, table => [primaryKey({ columns: [table.userId, table.draftKey] })]);

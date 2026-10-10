@@ -3,12 +3,14 @@ import { EditorView } from '@codemirror/view';
 import { openSearchPanel } from '@codemirror/search';
 import { undo, redo } from '@codemirror/commands';
 import { CodeEditor } from './CodeEditor.jsx';
+import { downloadFile } from '../lib/export.js';
 import { Modal } from './Modal.jsx';
 
 export function SourcePanel({ workbench: w, onLibrary }) {
   const fileInput = useRef(null), editorRef = useRef(null);
   const [dragging, setDragging] = useState(false), [wrap, setWrap] = useState(false), [conversion, setConversion] = useState(null);
   const dragDepth = useRef(0);
+  const errorCount = w.diagnostics.filter(d => d.severity !== 'warning').length;
   function jump(d) {
     const view = editorRef.current; if (!view) return;
     const line = view.state.doc.line(Math.min(d.line, view.state.doc.lines));
@@ -25,6 +27,7 @@ export function SourcePanel({ workbench: w, onLibrary }) {
       <button disabled={w.busy} onClick={w.importExample}>範例</button>
       <button disabled={w.busy || !w.session.user} onClick={onLibrary}>我的文件</button>
       <span className="tool-divider" />
+      <button onClick={() => downloadFile(w.editor, 'source')}>下載草稿</button>
       <button title="搜尋與取代（⌘ / Ctrl + F）" onClick={() => openSearchPanel(editorRef.current)}>搜尋</button>
       <button title="復原（⌘ / Ctrl + Z）" disabled={w.busy} onClick={() => undo(editorRef.current)}>復原</button>
       <button title="重做" disabled={w.busy} onClick={() => redo(editorRef.current)}>重做</button>
@@ -32,15 +35,22 @@ export function SourcePanel({ workbench: w, onLibrary }) {
       <select aria-label="轉換格式" value="" disabled={w.busy} onChange={event => setConversion(event.target.value)}><option value="" disabled>轉換格式</option><option value="yaml">YAML</option><option value="json">JSON</option></select>
       <input id="file" ref={fileInput} type="file" accept=".yaml,.yml,.json" hidden disabled={w.busy} onChange={event => { w.loadFile(event.target.files[0]); event.target.value = ''; }} />
     </div>
-    <CodeEditor key={`${w.session.user?.id || 'guest'}:${w.selectedId || 'draft'}`} editorRef={editorRef} source={w.editor.source} busy={w.busy} diagnostics={w.diagnostics} wrap={wrap} onChange={w.changeSource} onPaste={w.pasteSource} onSave={() => w.save()} />
+    <div className="draft-status" role="status">{w.session.user ? w.cloudDraft.status : '登入後即可自動保存雲端草稿。'}
+      {w.session.user && !w.cloudDraft.ready && !w.cloudDraft.recovery && <button className="text-button" onClick={w.cloudDraft.retry}>重新讀取草稿</button>}
+      {w.cloudDraft.recovery && <div className="draft-recovery"><strong>找到 {new Date(w.cloudDraft.recovery.updatedAt).toLocaleString('zh-TW')} 的草稿</strong><p>恢復後可繼續編輯，正式版本不會被改動。</p><button className="button primary" onClick={w.cloudDraft.recover}>恢復草稿</button><button className="text-button" onClick={() => w.cloudDraft.discard().catch(error => w.reportError(error.message))}>捨棄草稿</button></div>}
+      {w.cloudDraft.conflict && <p>另一個分頁已變更草稿。請先下載草稿保留目前內容，再重新讀取。<button className="text-button" onClick={w.cloudDraft.retry}>重新讀取草稿</button></p>}
+      {w.cloudDraft.status.startsWith('草稿未同步') && !w.cloudDraft.conflict && <button className="text-button" onClick={() => w.cloudDraft.flush().catch(error => w.reportError(error.message))}>重試保存</button>}
+      {w.draftBaseVersion && w.draftBaseVersion !== w.currentVersion && <p>草稿基於 v{w.draftBaseVersion}，目前文件為 v{w.currentVersion}。請另存新文件以保留兩份內容。</p>}
+    </div>
+    <CodeEditor key={`${w.session.user?.id || 'guest'}:${w.selectedId || 'draft'}`} editorRef={editorRef} source={w.editor.source} busy={w.busy || !w.cloudDraft.ready} diagnostics={w.diagnostics} wrap={wrap} onChange={w.changeSource} onPaste={w.pasteSource} onSave={() => w.save()} />
     <div className="editor-diagnostics" aria-live="polite">
-      <div className="validation-summary">{w.validating ? '檢查中…' : w.diagnostics.length ? '定義有錯誤 · 預覽保留最後有效內容' : '語法與必要欄位檢查通過'}<span>{w.editor.source.split('\n').length} 行</span></div>
-      {w.diagnostics.map((d, i) => <button key={i} className="diagnostic-item" onClick={() => jump(d)}>第 {d.line} 行，第 {d.column} 欄：{d.message}</button>)}
+      <div className="validation-summary">{w.validating ? '檢查中…' : errorCount ? `${errorCount} 個錯誤 · 預覽保留最後有效內容` : w.diagnostics.length ? `${w.diagnostics.length} 個提醒 · 外部定義尚未驗證` : 'OpenAPI 結構與語意檢查通過'}<span>{w.editor.source.split('\n').length} 行</span></div>
+      {w.diagnostics.map((d, i) => <button key={i} className={'diagnostic-item ' + (d.severity || 'error')} onClick={() => jump(d)}>第 {d.line} 行，第 {d.column} 欄：{d.message}</button>)}
     </div>
     <div className="editor-savebar">
       {w.selectedId && w.session.user && <input aria-label="版本說明" value={w.versionNote} maxLength={200} disabled={w.busy} onChange={event => w.setVersionNote(event.target.value)} placeholder="版本說明（選填）" />}
-      <button id="render" className="button render-button" disabled={w.busy || !!w.diagnostics.length || w.validating} onClick={() => w.save()}>{w.session.user ? w.selectedId ? '儲存新版本' : '儲存文件' : '預覽文件'}</button>
-      {w.selectedId && w.session.user && <button className="text-button" disabled={w.busy || !!w.diagnostics.length || w.validating} onClick={() => w.save(w.editor, true)}>另存新文件</button>}
+      <button id="render" className="button render-button" disabled={w.busy || !w.cloudDraft.ready || !!errorCount || w.validating} onClick={() => w.save()}>{w.session.user ? w.selectedId ? '儲存新版本' : '儲存文件' : '預覽文件'}</button>
+      {w.selectedId && w.session.user && <button className="text-button" disabled={w.busy || !w.cloudDraft.ready || !!errorCount || w.validating} onClick={() => w.save(w.editor, true)}>另存新文件</button>}
     </div>
     <div className="editor-footnotes"><p id="editor-help">⌘ / Ctrl + Enter 儲存 · 拖入 YAML / JSON 開啟 · 最大 5 MB</p><div id="status" role="status">{w.status}</div>{!w.session.user && <p>登入後可保存文件；未登入的編輯不會同步至帳號。</p>}{w.error && <div id="error" className="error" role="alert">{w.error}</div>}</div>
     {dragging && <div className="editor-drop-overlay">放開以匯入文件</div>}

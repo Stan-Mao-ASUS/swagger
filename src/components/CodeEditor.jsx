@@ -59,7 +59,7 @@ export function CodeEditor({ source, busy, diagnostics, wrap, onChange, onPaste,
     view.dispatch(setDiagnostics(view.state, diagnostics.map(d => {
       const line = view.state.doc.line(Math.min(d.line, view.state.doc.lines));
       const from = Math.min(line.to, line.from + d.column - 1);
-      return { from, to: Math.min(view.state.doc.length, from + 1), severity: 'error', message: d.message };
+      return { from, to: Math.min(view.state.doc.length, from + 1), severity: d.severity || 'error', message: d.message };
     })));
   }, [diagnostics, source]);
   return <div className="code-editor" ref={host} />;

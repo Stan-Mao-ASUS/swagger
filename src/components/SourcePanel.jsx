@@ -1,51 +1,49 @@
 import { useRef, useState } from 'react';
-import { DocumentHistory } from './DocumentHistory.jsx';
+import { EditorView } from '@codemirror/view';
+import { openSearchPanel } from '@codemirror/search';
+import { undo, redo } from '@codemirror/commands';
+import { CodeEditor } from './CodeEditor.jsx';
+import { Modal } from './Modal.jsx';
 
 export function SourcePanel({ workbench: w, onLibrary }) {
-  const fileInput = useRef(null);
+  const fileInput = useRef(null), editorRef = useRef(null);
+  const [dragging, setDragging] = useState(false), [wrap, setWrap] = useState(false), [conversion, setConversion] = useState(null);
   const dragDepth = useRef(0);
-  const [dragging, setDragging] = useState(false);
-  const authNote = w.session.loading ? '' : w.session.user ? '文件會安全保存至你的帳號。每次匯入都會新增一筆紀錄。' : w.session.configured ? '使用 Google 登入後，即可儲存文件及查看個人歷史。未登入仍可預覽。' : 'Google 登入尚待站主完成設定。目前僅可預覽，文件不會儲存。';
-  function handlePaste(event) {
-    if (w.busy) return;
-    event.preventDefault();
-    const input = event.currentTarget;
-    const text = event.clipboardData.getData('text/plain');
-    // Pass the next value explicitly so autosave never reads stale React state.
-    w.pasteSource(input.value.slice(0, input.selectionStart) + text + input.value.slice(input.selectionEnd));
+  function jump(d) {
+    const view = editorRef.current; if (!view) return;
+    const line = view.state.doc.line(Math.min(d.line, view.state.doc.lines));
+    const position = Math.min(line.to, line.from + d.column - 1);
+    view.dispatch({ selection: { anchor: position }, effects: EditorView.scrollIntoView(position, { y: 'center' }) }); view.focus();
   }
-  return <aside className="source-panel" aria-label="匯入 API 定義">
-    <div className="panel-heading"><span className="eyebrow">API DEFINITION</span><h1>你的 API，清楚呈現。</h1><p>開啟 YAML 檔案，即可瀏覽互動文件。</p></div>
-    <p id="auth-note" className="auth-note" role="status">{authNote}</p>
-    <div id="dropzone" className={'dropzone' + (dragging ? ' dragging' : '')}
-      onDragEnter={event => { event.preventDefault(); dragDepth.current++; setDragging(true); }}
-      onDragLeave={() => { if (--dragDepth.current <= 0) setDragging(false); }}
-      onDragOver={event => event.preventDefault()}
-      onDrop={event => {
-        event.preventDefault(); dragDepth.current = 0; setDragging(false);
-        if (w.busy) return;
-        if (event.dataTransfer.files.length !== 1) return w.reportError('請一次拖曳一個 API 定義檔案。');
-        w.loadFile(event.dataTransfer.files[0]);
-      }}>
-      <span className="file-symbol" aria-hidden="true">{'{ }'}</span><strong>將檔案拖曳至此</strong>
-      <span className="file-hint">.yaml、.yml 或 .json · 最大 5 MB</span>
-      <button id="upload" className="button primary" type="button" disabled={w.busy} onClick={() => fileInput.current?.click()}>選擇檔案</button>
-      <input id="file" ref={fileInput} type="file" accept=".yaml,.yml,.json,application/json,application/yaml,text/yaml" hidden disabled={w.busy}
-        onChange={event => { w.loadFile(event.target.files[0]); event.target.value = ''; }} />
+  return <aside className={'source-panel editor-panel' + (dragging ? ' dragging' : '')} aria-label="API 定義編輯區"
+    onDragEnter={event => { if (event.dataTransfer.types.includes('Files')) { event.preventDefault(); dragDepth.current++; setDragging(true); } }}
+    onDragLeave={() => { if (--dragDepth.current <= 0) setDragging(false); }} onDragOver={event => { if (event.dataTransfer.types.includes('Files')) event.preventDefault(); }}
+    onDrop={event => { if (!event.dataTransfer.files.length) return; event.preventDefault(); dragDepth.current = 0; setDragging(false); if (event.dataTransfer.files.length !== 1) return w.reportError('請一次拖曳一個檔案。'); w.loadFile(event.dataTransfer.files[0]); }}>
+    <div className="editor-filebar"><span className="editor-file-name" title={w.editor.fileName}>{w.editor.fileName}</span><span className="draft-label">{w.busy ? '處理中…' : w.dirty ? '未儲存' : `已儲存 v${w.currentVersion}`}</span></div>
+    <div className="editor-tools" aria-label="編輯器工具列">
+      <button disabled={w.busy} onClick={() => fileInput.current?.click()}>開啟檔案</button>
+      <button disabled={w.busy} onClick={w.importExample}>範例</button>
+      <button disabled={w.busy || !w.session.user} onClick={onLibrary}>我的文件</button>
+      <span className="tool-divider" />
+      <button title="搜尋與取代（⌘ / Ctrl + F）" onClick={() => openSearchPanel(editorRef.current)}>搜尋</button>
+      <button title="復原（⌘ / Ctrl + Z）" disabled={w.busy} onClick={() => undo(editorRef.current)}>復原</button>
+      <button title="重做" disabled={w.busy} onClick={() => redo(editorRef.current)}>重做</button>
+      <button aria-pressed={wrap} onClick={() => setWrap(!wrap)}>換行</button>
+      <select aria-label="轉換格式" value="" disabled={w.busy} onChange={event => setConversion(event.target.value)}><option value="" disabled>轉換格式</option><option value="yaml">YAML</option><option value="json">JSON</option></select>
+      <input id="file" ref={fileInput} type="file" accept=".yaml,.yml,.json" hidden disabled={w.busy} onChange={event => { w.loadFile(event.target.files[0]); event.target.value = ''; }} />
     </div>
-    <div className="editor-heading"><label htmlFor="source">或貼上 API 定義</label><button id="demo" type="button" className="text-button" disabled={w.busy} onClick={w.importExample}>載入範例</button></div>
-    <textarea id="source" spellCheck={false} aria-describedby="editor-help" readOnly={w.busy} value={w.editor.source}
-      placeholder={'openapi: 3.0.3\ninfo:\n  title: My API\n  version: 1.0.0\npaths: {}'}
-      onChange={event => w.changeSource(event.target.value)} onPaste={handlePaste}
-      onKeyDown={event => { if ((event.metaKey || event.ctrlKey) && event.key === 'Enter') { event.preventDefault(); w.save(); } }} />
-    <p id="editor-help" className="shortcut">支援 Swagger 2.0 / OpenAPI 3.0、3.1<span>⌘ / Ctrl + Enter</span></p>
-    {w.selectedId && w.session.user && <label className="version-note-input">版本說明（選填）<input value={w.versionNote} maxLength={200} disabled={w.busy} onChange={event => w.setVersionNote(event.target.value)} placeholder="例如：新增會員查詢端點" /></label>}
-    <button id="render" className="button render-button" type="button" disabled={w.busy} onClick={() => w.save()}>{w.selectedId && w.session.user ? `儲存新版本（目前 v${w.currentVersion}）` : '儲存並更新文件'}</button>
-    {w.selectedId && w.session.user && <button type="button" className="text-button save-copy" disabled={w.busy} onClick={() => w.save(w.editor, true)}>另存為新文件</button>}
-    <div id="status" className="status" role="status" aria-live="polite">{w.status}</div>
-    {w.error && <div id="error" className="error" role="alert">{w.error}</div>}
-    <p className="local-note">登入後，上傳或貼上文件會保存到你的個人歷史。外部參照及「Try it out」會連線至文件指定的網址。</p>
-    <DocumentHistory session={w.session} busy={w.busy} items={w.items} nextOffset={w.nextOffset} selectedId={w.selectedId} historyError={w.historyError}
-      onLibrary={onLibrary} onRefresh={w.refreshHistory} onOpen={w.openDocument} onDelete={w.deleteDocument} />
+    <CodeEditor key={`${w.session.user?.id || 'guest'}:${w.selectedId || 'draft'}`} editorRef={editorRef} source={w.editor.source} busy={w.busy} diagnostics={w.diagnostics} wrap={wrap} onChange={w.changeSource} onPaste={w.pasteSource} onSave={() => w.save()} />
+    <div className="editor-diagnostics" aria-live="polite">
+      <div className="validation-summary">{w.validating ? '檢查中…' : w.diagnostics.length ? '定義有錯誤 · 預覽保留最後有效內容' : '語法與必要欄位檢查通過'}<span>{w.editor.source.split('\n').length} 行</span></div>
+      {w.diagnostics.map((d, i) => <button key={i} className="diagnostic-item" onClick={() => jump(d)}>第 {d.line} 行，第 {d.column} 欄：{d.message}</button>)}
+    </div>
+    <div className="editor-savebar">
+      {w.selectedId && w.session.user && <input aria-label="版本說明" value={w.versionNote} maxLength={200} disabled={w.busy} onChange={event => w.setVersionNote(event.target.value)} placeholder="版本說明（選填）" />}
+      <button id="render" className="button render-button" disabled={w.busy || !!w.diagnostics.length || w.validating} onClick={() => w.save()}>{w.session.user ? w.selectedId ? '儲存新版本' : '儲存文件' : '預覽文件'}</button>
+      {w.selectedId && w.session.user && <button className="text-button" disabled={w.busy || !!w.diagnostics.length || w.validating} onClick={() => w.save(w.editor, true)}>另存新文件</button>}
+    </div>
+    <div className="editor-footnotes"><p id="editor-help">⌘ / Ctrl + Enter 儲存 · 拖入 YAML / JSON 開啟 · 最大 5 MB</p><div id="status" role="status">{w.status}</div>{!w.session.user && <p>登入後可保存文件；未登入的編輯不會同步至帳號。</p>}{w.error && <div id="error" className="error" role="alert">{w.error}</div>}</div>
+    {dragging && <div className="editor-drop-overlay">放開以匯入文件</div>}
+    {conversion && <Modal title="轉換文件格式" onClose={() => setConversion(null)}><p>轉為 {conversion.toUpperCase()} 會重新排版，移除 YAML 註解及 anchor。儲存前仍可用「復原」回到原始內容。</p><button className="button primary" onClick={() => { w.convert(conversion); setConversion(null); }}>轉換為 {conversion.toUpperCase()}</button></Modal>}
   </aside>;
 }

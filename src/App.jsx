@@ -1,7 +1,6 @@
 import { useEffect, useState } from 'react';
 import { AccountBar } from './components/AccountBar.jsx';
-import { SourcePanel } from './components/SourcePanel.jsx';
-import { DocumentPreview } from './components/DocumentPreview.jsx';
+import { EditorWorkspace } from './components/EditorWorkspace.jsx';
 import { DocumentLibrary } from './components/DocumentLibrary.jsx';
 import { ThemeProvider } from './components/ThemeProvider.jsx';
 import { SharedArea } from './components/SharedArea.jsx';
@@ -17,7 +16,7 @@ export default function App() {
   }
   return <ThemeProvider user={workbench.session.user} request={workbench.request}>
     <AccountBar shared={route.shared} onWorkspace={() => navigate(false)} onShared={() => navigate(true)} session={workbench.session} busy={workbench.busy} onSignOut={workbench.signOut} onLibrary={() => { navigate(false); setLibraryOpen(true); }} />
-    {route.shared ? <SharedArea shareId={route.shareId} onOpen={id => navigate(true, id)} onBrowse={() => navigate(true)} /> : <main className="workspace"><SourcePanel workbench={workbench} onLibrary={() => { navigate(false); setLibraryOpen(true); }} /><DocumentPreview preview={workbench.preview} workbench={workbench} /></main>}
+    {route.shared ? <SharedArea shareId={route.shareId} onOpen={id => navigate(true, id)} onBrowse={() => navigate(true)} /> : <EditorWorkspace workbench={workbench} onLibrary={() => { navigate(false); setLibraryOpen(true); }} />}
     {libraryOpen && workbench.session.user && <DocumentLibrary key={workbench.session.user.id} workbench={workbench} onClose={() => setLibraryOpen(false)} />}
   </ThemeProvider>;
 }

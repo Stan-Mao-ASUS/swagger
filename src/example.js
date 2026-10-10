@@ -4,7 +4,7 @@ info:
   version: 1.0.0
   description: |
     寵物商店 API 範例。展開下方端點，查看參數、回應與資料結構。
-    使用左側匯入自己的 YAML，或直接貼上內容後按「更新文件」。
+    在左側編輯 YAML，右側即時預覽；登入後可儲存版本與分享文件。
 servers:
   - url: https://petstore3.swagger.io/api/v3
     description: Swagger 公開範例伺服器

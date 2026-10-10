@@ -20,7 +20,7 @@ function SwaggerPreview({ spec, readOnly }) {
       const SwaggerUIBundle = window.SwaggerUIBundle;
       ui = SwaggerUIBundle({ spec, domNode: mount, presets: [SwaggerUIBundle.presets.apis], layout: 'BaseLayout', validatorUrl: null,
         persistAuthorization: false, deepLinking: false, docExpansion: 'list', defaultModelsExpandDepth: 1,
-        displayRequestDuration: true, showExtensions: true,
+        displayRequestDuration: true, showExtensions: true, filter: true,
         supportedSubmitMethods: readOnly ? [] : ['get','put','post','delete','options','head','patch','trace'], tryItOutEnabled: false });
     } catch { setError('文件元件載入失敗，請重新整理頁面。'); }
     return () => { ui?.destroy?.(); mount.remove(); };
@@ -38,6 +38,8 @@ export function DocumentPreview({ preview, workbench, readOnly = false }) {
     </div>
     {versionsOpen && workbench?.selectedId && workbench.session.user && <VersionHistory key={workbench.selectedId} workbench={workbench} onClose={() => setVersionsOpen(false)} />}
     {shareOpen && workbench?.selectedId && workbench.session.user && <ShareDialog key={workbench.selectedId} workbench={workbench} onClose={() => setShareOpen(false)} />}
+    {workbench && (workbench.validating || workbench.diagnostics.length > 0) && <div className="preview-stale" role="status">{workbench.validating ? '正在更新預覽…' : '編輯內容有錯誤，下方為最後一次有效預覽。'}</div>}
+    {workbench?.dirty && workbench.selectedId && <div className="preview-draft-note">預覽包含尚未儲存的變更。分享區仍顯示已發布版本。</div>}
     <SwaggerPreview spec={spec} readOnly={readOnly} />
     <footer className="document-footer">以 <a href="https://swagger.io/tools/swagger-ui/" target="_blank" rel="noopener noreferrer">Swagger UI</a> 呈現 · {readOnly ? '分享文件為唯讀；外部參照可能需要網路連線。' : 'API 測試需目標伺服器允許 CORS；本機檔案請使用完整的伺服器網址。'}</footer>
   </section>;

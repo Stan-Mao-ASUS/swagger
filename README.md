@@ -143,3 +143,11 @@ npm audit --omit=dev
 - GET `/api/shared`（q、offset）、GET `/api/shared/:publicationId` 可匿名讀取，回應明確列出公開欄位且 no-store。分享頁停用 API Try it out，提供既有三種匯出格式。
 - GET/PUT/DELETE `/api/documents/:id/publication` 必須通過 session ownership；PUT 要求 version、title、選填 summary 及 confirmPublic=true。新增/更新 SQL 本身再次驗證該版本與文件 ownership、未刪除狀態；所有寫入保留 Origin 檢查。既有私人文件與版本 API 維持 owner-only。
 - 0003 migration 僅新增 publications 表與索引，不會將既有文件公開。33 項自動測試涵蓋主動發布、指定版本、私人資料拒絕、撤下、重新發布、重啟保存與文件刪除連動。
+
+## Editor workspace
+
+The workspace now uses CodeMirror 6 for YAML/JSON editing and the existing Swagger UI renderer for a debounced (350 ms) live preview. It includes line numbers, folding, key suggestions for YAML, find/replace, undo/redo, wrapping, resizable panes, and YAML/JSON conversion. Conversion prompts before discarding comments and can be undone.
+
+Validation reports YAML syntax and required document fields with clickable locations. It is not a complete OpenAPI semantic validator. Invalid edits retain the last valid preview, marked as stale. Private cloud saves remain explicit versions; valid paste/import/upload creates a new document as before. Publishing continues to select an immutable saved version. No new database migration, auth configuration, public document, or external code-generation service is introduced.
+
+Editor controls support keyboard interaction: Cmd/Ctrl+Enter saves, Cmd/Ctrl+F searches, and the focused pane separator responds to arrow keys, Home and End. On narrow screens the split layout stacks; Edit and Preview controls can show one pane at a time.

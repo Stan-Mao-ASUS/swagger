@@ -43,3 +43,8 @@ export const drafts = sqliteTable('drafts', {
   revision: integer('revision').notNull(), objectKey: text('object_key'), fileName: text('file_name').notNull(), sourceType: text('source_type').notNull(),
   baseVersion: integer('base_version'), updatedAt: text('updated_at').notNull(),
 }, table => [primaryKey({ columns: [table.userId, table.draftKey] })]);
+
+export const mocks = sqliteTable('mocks', {
+  id: text('id').primaryKey(), documentId: text('document_id').notNull().unique().references(() => documents.id, { onDelete: 'cascade' }),
+  version: integer('version').notNull(), expiresAt: text('expires_at').notNull(), updatedAt: text('updated_at').notNull(),
+});

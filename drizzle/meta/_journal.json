@@ -43,6 +43,13 @@
       "when": 1791651935245,
       "tag": "0005_wild_ken_ellis",
       "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "6",
+      "when": 1791702962703,
+      "tag": "0006_parallel_scarlet_spider",
+      "breakpoints": true
     }
   ]
 }

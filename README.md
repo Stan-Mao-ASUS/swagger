@@ -160,3 +160,11 @@ Editor controls support keyboard interaction: Cmd/Ctrl+Enter saves, Cmd/Ctrl+F s
 - Trusted Swagger 2.0 / OpenAPI 3.0 / 3.1 structure schemas and the JSON Schema 2020-12 metaschema are precompiled at build time. No runtime eval or document upload to an external validator occurs. Schema checks are supplemented by internal reference, operation ID, path-template/parameter and security-scheme checks. Browser validation runs in a dedicated Worker. Both API formal writes and the editor reject errors; drafts accept incomplete text.
 - External references, references scoped by independent `$id`, and custom JSON Schema dialects are explicitly marked unverified warnings. No claim is made that their remote contents or examples match their schemas. Invalid legacy documents remain readable. Only the first 100 validation diagnostics are displayed.
 - New development checkouts must run `npm ci` then `npm run build` before `npm test`; the build generates the ignored standalone validators. Existing applied migration files are unchanged.
+
+### 版本比較與 Mock API
+
+- 版本歷史的比較基準提供參數、Request／Response、Schema、授權與伺服器變動摘要，可篩選可能不相容、待確認、一般變更。這是規則式輔助審查，並非完整相容性證明；外部參照／複雜規格會警示，最多顯示 500 項摘要，逐行比較仍保留。
+- 文件預覽的「Mock API」可選擇已儲存版本，確認回應資料可分享後啟用，期限為 1／7／30 天。URL 為 `/mock/<隨機識別碼>` 加 OpenAPI paths 中的路徑，不需 servers/basePath 前綴。Mock 不列入分享區；持有 URL 的人皆可使用，與文件分享的撤銷分開管理。更新會換發 URL；停用、到期、刪除文件立即失效。
+- Mock 優先使用 response/media example 或具名 examples，其次產生有界限的 Schema 示意資料；支援 Swagger 2 與 OpenAPI 3 的本地 JSON Pointer。`?__status=404&__example=name` 可選擇狀態與具名例子。支援 JSON、text/plain、空回應及 CORS（不允許攜帶跨站 credentials）。
+- Mock 不呼叫 upstream、不保存請求、沒有狀態性 CRUD，也不執行規格中的授權。不要傳入真實 token 或個資。外部參照、外部例子、二進位、串流不支援；Schema 產物不保證符合所有 pattern、組合、唯一性與範圍限制。回應上限 256 KB，生成深度 12、節點 1000、陣列最多 5 筆。
+- 所有 Mock 管理 API 驗證登入、文件 ownership 與 Origin；對外 Mock 只讀指定不可變版本，不提供文件、私人歷史或帳號資料 API。

@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { ExportMenu } from './ExportMenu.jsx';
 import { ShareDialog } from './ShareDialog.jsx';
+import { MockDialog } from './MockDialog.jsx';
 import { VersionHistory } from './VersionHistory.jsx';
 
 function SwaggerPreview({ spec, readOnly }) {
@@ -30,13 +31,15 @@ function SwaggerPreview({ spec, readOnly }) {
 
 export function DocumentPreview({ preview, workbench, readOnly = false }) {
   const [versionsOpen, setVersionsOpen] = useState(false);
+  const [mockOpen, setMockOpen] = useState(false);
   const [shareOpen, setShareOpen] = useState(false);
   const spec = preview?.spec;
   return <section className="document-panel" aria-label="Swagger API 文件">
     <div className="document-toolbar"><div><span className="document-label">文件預覽</span><span id="filename" className="filename">{preview?.fileName || ''}</span></div>
-      {spec && <div className="document-actions"><ExportMenu preview={preview} />{workbench?.selectedId && workbench.session.user && <button className="text-button" disabled={workbench.busy} onClick={() => setVersionsOpen(true)}>版本歷史 · v{workbench.currentVersion}</button>}{workbench?.selectedId && workbench.session.user && <button className="text-button" disabled={workbench.busy} onClick={() => setShareOpen(true)}>分享權限</button>}<span id="spec-version" className="version-chip">{spec.swagger ? 'Swagger 2.0' : `OpenAPI ${spec.openapi}`}</span></div>}
+      {spec && <div className="document-actions"><ExportMenu preview={preview} />{workbench?.selectedId && workbench.session.user && <button className="text-button" disabled={workbench.busy} onClick={() => setVersionsOpen(true)}>版本歷史 · v{workbench.currentVersion}</button>}{workbench?.selectedId && workbench.session.user && <button className="text-button" disabled={workbench.busy} onClick={() => setShareOpen(true)}>分享權限</button>}{workbench?.selectedId && workbench.session.user && <button className="text-button" disabled={workbench.busy} onClick={() => setMockOpen(true)}>Mock API</button>}<span id="spec-version" className="version-chip">{spec.swagger ? 'Swagger 2.0' : `OpenAPI ${spec.openapi}`}</span></div>}
     </div>
     {versionsOpen && workbench?.selectedId && workbench.session.user && <VersionHistory key={workbench.selectedId} workbench={workbench} onClose={() => setVersionsOpen(false)} />}
+    {mockOpen && workbench?.selectedId && workbench.session.user && <MockDialog key={workbench.selectedId} workbench={workbench} onClose={() => setMockOpen(false)} />}
     {shareOpen && workbench?.selectedId && workbench.session.user && <ShareDialog key={workbench.selectedId} workbench={workbench} onClose={() => setShareOpen(false)} />}
     {workbench && (workbench.validating || workbench.diagnostics.some(d => d.severity !== 'warning')) && <div className="preview-stale" role="status">{workbench.validating ? '正在更新預覽…' : '編輯內容有錯誤，下方為最後一次有效預覽。'}</div>}
     {workbench?.dirty && workbench.selectedId && <div className="preview-draft-note">預覽包含尚未儲存的變更。分享區仍顯示已發布版本。</div>}

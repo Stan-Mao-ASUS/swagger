@@ -1,3 +1,4 @@
+import { manageMock, serveMock } from './mocks.js';
 import assets from '../.sites-runtime/assets.js';
 import { handleAuth, getUser, authReady, origin } from './auth.js';
 import { manageDraft } from './drafts.js';
@@ -8,6 +9,7 @@ export default {
   async fetch(request, env) {
     const path = new URL(request.url).pathname;
     try {
+      if (path.startsWith('/mock/')) return await serveMock(request, env);
       if (path.startsWith('/api/')) {
         if (!['GET','HEAD'].includes(request.method) && (request.headers.get('origin') !== origin(env) || request.headers.get('sec-fetch-site') === 'cross-site')) throw new HttpError(403, '請從本站操作。');
         if (path === '/api/me' && request.method === 'GET') return json({ user: await getUser(request, env), googleConfigured: authReady(env) });
@@ -24,6 +26,8 @@ export default {
           const user = await getUser(request, env);
           if (!user) throw new HttpError(401, '請先使用 Google 登入。');
           if (path.startsWith('/api/drafts/')) return await manageDraft(request, env, user);
+          const mock = path.match(/^\/api\/documents\/([a-f0-9-]{36})\/mock$/);
+          if (mock) return await manageMock(request, env, user, mock[1]);
           const publication = path.match(/^\/api\/documents\/([a-f0-9-]{36})\/publication$/);
           if (publication) return await managePublication(request, env, user, publication[1]);
           return path.startsWith('/api/documents') ? await documents(request, env, user) : await librarySettings(request, env, user);

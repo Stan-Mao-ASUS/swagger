@@ -8,6 +8,7 @@ export function VersionHistory({ workbench: w, onClose }) {
   const [versions, setVersions] = useState([]), [nextOffset, setNextOffset] = useState(null);
   const [selected, setSelected] = useState(w.currentVersion), [compare, setCompare] = useState('');
   const [version, setVersion] = useState(null), [diff, setDiff] = useState(null);
+  const [riskFilter, setRiskFilter] = useState('all');
   const [confirmRestore, setConfirmRestore] = useState(false);
   const [error, setError] = useState(''), [loading, setLoading] = useState(true), [loadingMore, setLoadingMore] = useState(false);
   const base = `/api/documents/${w.selectedId}/versions`;
@@ -53,8 +54,12 @@ export function VersionHistory({ workbench: w, onClose }) {
       {loading && <p role="status">正在讀取版本…</p>}
       {!loading && version && <><h3>{version.title} <span className="version-chip">v{selected}</span></h3>
         {diff ? <><p className="muted">− 移除　＋ 新增 · 比較 v{compare} → v{selected}</p>
-          {diff.summary.changes.length > 0 && <ul className="diff-summary">{diff.summary.changes.map((change, i) => <li key={i}>{change.type === 'removed' ? '−' : change.type === 'added' ? '+' : '~'} {change.label}</li>)}</ul>}
-          <p className="muted">摘要僅列端點與 API 版本變動；參數、模型等細節請見下方差異。</p>
+          <div className="diff-metrics"><strong>{diff.summary.changes.length} 項變更</strong><span>{diff.summary.changes.filter(c => c.risk === 'breaking').length} 項可能破壞相容性</span><span>{diff.summary.changes.filter(c => c.risk === 'review').length} 項待確認</span></div>
+          <label className="diff-filter">變更篩選<select value={riskFilter} onChange={e => setRiskFilter(e.target.value)}><option value="all">全部變更</option><option value="breaking">可能破壞相容性</option><option value="review">需要人工確認</option><option value="info">一般變更</option></select></label>
+          {diff.summary.warnings.map((warning, i) => <p className="error" key={i}>{warning}</p>)}
+          <ul className="diff-summary">{diff.summary.changes.filter(c => riskFilter === 'all' || c.risk === riskFilter).map((change, i) => <li key={i} className={'risk-' + change.risk}><span className="risk-badge">{change.risk === 'breaking' ? '可能不相容' : change.risk === 'review' ? '待確認' : '一般'}</span> {change.type === 'removed' ? '−' : change.type === 'added' ? '+' : '~'} {change.label}{change.detail && <small>{change.detail}</small>}</li>)}</ul>
+          {!diff.summary.changes.length && <p className="muted">未發現已涵蓋規則的 API 結構變動。</p>}
+          <p className="muted">相容性標示是輔助判斷，包含參數、Request／Response、Schema 與授權規則；不代表完整相容性保證。請一併檢查原始差異。</p>
           <div className="diff-view">{diff.rows.map((row, i) => row.type === 'collapsed' ? <details key={i}><summary>… {row.count} 行相同 …</summary>{row.lines.map((line, n) => <pre key={n}>{'  '}{line.text || ' '}</pre>)}</details> : <pre key={i} className={'diff-line ' + row.type}>{row.type === 'added' ? '+ ' : row.type === 'removed' ? '− ' : '  '}{row.text || ' '}</pre>)}</div></>
           : <><pre className="version-source">{version.source.slice(0, 500000)}</pre>{version.source.length > 500000 && <p className="muted">畫面僅顯示前 500,000 字元；下載可取得完整內容。</p>}</>}
       </>}

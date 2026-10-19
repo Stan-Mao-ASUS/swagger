@@ -21,6 +21,10 @@
       "migrations_dir": "drizzle"
     }
   ],
+  // Per-user limit for the Try it out proxy (/api/proxy): 30 requests per 60 seconds.
+  "ratelimits": [
+    { "name": "PROXY_LIMITER", "namespace_id": "1001", "simple": { "limit": 30, "period": 60 } }
+  ],
   "r2_buckets": [
     { "binding": "BUCKET", "bucket_name": "swagger-yaml-workbench" }
   ]

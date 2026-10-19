@@ -73,6 +73,8 @@ Throw `HttpError(status, message)` for errors that users should see. Any other e
 
 **Mocks.** `shared/mock.ts` holds response generation (`mockResponse`), request validation (`validateMockRequest`, structural checks only: no `format` or `pattern`), the `__*` query controls (`mockControls`) and request samples (`sampleRequest`). The mock dialog uses the same code for its local preview, so the preview and `/mock/*` behave the same.
 
+**Try it out proxy (`worker/proxy.ts`).** `proxyTarget` is the only place that decides which URLs may be fetched. Every redirect hop goes through it too, so keep all SSRF rules there, and add a case to `tests/proxy.test.ts` for any new rule. The frontend interceptor in `DocumentPreview.tsx` proxies only Try it out calls (`!request.loadSpec`).
+
 **Migrations.** Edit `db/schema.ts`, run `npm run db:generate`, and commit the new `drizzle/NNNN_*.sql`. Never edit a migration that has already been applied; migrations must be additive. `npm run dev` and the tests apply the SQL files themselves, splitting on `--> statement-breakpoint`. Production uses `wrangler d1 migrations apply`.
 
 **Frontend state (`src/state/`).** Server data uses TanStack Query, and client state uses Zustand:
@@ -80,7 +82,7 @@ Throw `HttpError(status, message)` for errors that users should see. Any other e
 - `queries.ts` has one hook per resource: `useSession`, `useDocuments` (infinite query), `useCategories`, `usePreferences`, `useVersions`, `useVersion` (immutable, cached forever), `usePublication`, `useMock` and the shared-area queries. Dialogs mutate with `useMutation` and then write the result into the cache or invalidate it.
 - `workbench.ts` is the Zustand store for the editor: source, preview, open document, version, diagnostics, status and the `busy` write lock. Its actions (`save`, `openDocument`, `pasteSource`, `restoreVersion`, `deleteDocument`, `signOut` and others) run one at a time and invalidate the affected queries.
 - `cloud-draft.ts` is a Zustand store for the autosaved draft. It keeps one session object per account and document target, and every async result checks it still belongs to that session. `useCloudDraftSync` loads drafts and autosaves 800 ms after typing stops.
-- `validation.ts` posts the editor content to `validation-worker.ts` → `lib/analyze-source.ts`, which maps JSON Pointer issue paths to line and column. `theme.ts` combines the account preference with a localStorage cache.
+- `validation.ts` posts the editor content to `validation-worker.ts` → `lib/analyze-source.ts`, which maps JSON Pointer issue paths to line and column. The outline is computed only while its panel is open, because it needs the YAML syntax tree; it points at keys, while diagnostics point at values. `theme.ts` combines the account preference with a localStorage cache.
 
 `App.tsx` mounts these hooks once. Components read the stores with selectors (`useShallow` for objects) instead of receiving props. The editor is CodeMirror 6. Swagger UI comes from `public/vendor/`, and a new instance is mounted for each document so that auth state from the previous document is cleared.
 

@@ -11,6 +11,10 @@ The user interface is in Traditional Chinese.
 - CodeMirror 6 editor with line numbers, folding, YAML key suggestions, find and replace, undo and redo, line wrapping, and YAML ⇄ JSON conversion. Conversion warns that YAML comments and anchors are lost, and you can undo it.
 - Live Swagger UI preview, updated 350 ms after you stop typing. If an edit is invalid, the last valid preview stays visible and is marked as stale.
 - Open documents by upload, drag and drop, or paste, or load the built-in example. The size limit is 5 MB. **Authorize** and **Try it out** work as in Swagger UI, subject to the target server's CORS policy.
+- **Outline** lists every path, operation, webhook and schema with a filter. Clicking an entry jumps to its line in the editor.
+- **Format** puts keys in the conventional OpenAPI order (for example `openapi`, `info`, `servers`, `tags`, `paths`, `components`, and `summary`, `operationId`, `parameters`, `requestBody`, `responses` inside operations). It can also sort paths and schema names. Unknown keys and `x-` extensions keep their relative order. Like conversion, it drops YAML comments and anchors, and you can undo it.
+- **Code examples** generate curl, JavaScript `fetch` and Python `requests` calls for any endpoint, also on shared pages. They use the first server URL (or `host`/`basePath`), sample values for required parameters and JSON bodies, and placeholders such as `<TOKEN>` and `<API_KEY>` for credentials.
+- **Try it out proxy** (signed in): turn it on above the preview to send Try it out requests through the Worker, so the target API does not need CORS. See [Try it out proxy](#try-it-out-proxy) for the safety rules.
 - Keyboard: Cmd/Ctrl+Enter saves and Cmd/Ctrl+F searches. The pane separator responds to the arrow keys, Home and End. On narrow screens the panes stack, and the Edit and Preview buttons show one pane at a time.
 
 ### Validation
@@ -79,6 +83,17 @@ The user interface is in Traditional Chinese.
 | Build | esbuild bundles the frontend and the Worker. Wrangler only deploys and runs migrations |
 
 Everything is strict TypeScript. `tsc` only type-checks (`npm run typecheck`): esbuild strips types for the bundles, and Node 24 runs the tests and scripts directly from `.ts`. The API contract shared by the Worker and the frontend is in `shared/types.ts`, and the parser, validator and mock engine in `shared/` run in both places.
+
+### Try it out proxy
+
+`/api/proxy` forwards a request to the URL in its `x-proxy-url` header. Swagger UI only uses it for Try it out calls while the proxy option is on, never for loading the spec or its references.
+
+- It requires a signed-in session. The custom header cannot be sent cross-site without a CORS preflight, which the Worker rejects, and writes still need a same-site `Origin`.
+- Targets must be `http` or `https` without embedded credentials. Host names are compared without a trailing dot. The proxy refuses `localhost`, single-label and `.local`/`.internal` names, private, loopback, link-local, carrier-grade NAT and reserved IPv4 ranges (including cloud metadata at `169.254.169.254`), IPv6 addresses outside global unicast, and this site itself. Up to 5 redirects are followed, and every hop is checked against the same rules.
+- The browser's cookies, `Origin`, `Referer`, `cf-*`, `sec-*`, forwarding and hop-by-hop headers are never forwarded. Other headers, such as `Authorization` from Swagger UI's **Authorize** dialog, go to the target. Responses lose `Set-Cookie`, CORS and encoding headers, and are served with `no-store`, `nosniff` and a sandboxing CSP.
+- Each user may send 30 proxied requests per minute, enforced by the `PROXY_LIMITER` rate-limit binding in `wrangler.jsonc`. Further requests get 429.
+- A redirect to another origin keeps only `Accept`, `Accept-Language`, `Content-Type` and `User-Agent`, so credentials never follow it. `WWW-Authenticate` is never passed back, so a target cannot make the browser show a login prompt for this site.
+- Requests and responses are limited to 5 MB, with a 15-second timeout.
 
 ### Security model
 
@@ -182,6 +197,7 @@ All private endpoints require a session cookie. All writes require a same-site `
 | `GET` / `POST /api/categories`, `PATCH` / `DELETE /api/categories/:id` | Manage categories |
 | `GET /api/shared` | Public shares (`q`, `offset`). No sign-in required |
 | `GET /api/shared/:publicationId` | One public or unlisted share. No sign-in required |
+| `ANY /api/proxy` | Try it out proxy to the URL in the `x-proxy-url` header (signed in) |
 | `ANY /mock/:mockId/<path>` | A mock response. No sign-in required |
 
 ## Project structure
@@ -191,9 +207,9 @@ All private endpoints require a session cookie. All writes require a same-site `
 | `src/main.tsx`, `src/App.tsx` | React entry point and app shell |
 | `src/components/` | Account bar, editor, preview, library, version history, share and mock dialogs |
 | `src/state/` | TanStack Query client and query hooks (`query-client.ts`, `queries.ts`), plus Zustand stores for the editor (`workbench.ts`) and cloud drafts (`cloud-draft.ts`), validation and theme |
-| `src/lib/` | API client, session client, OpenAPI helpers, diff, changelog, lint rules, exports and TypeScript generation |
+| `src/lib/` | API client, session client, OpenAPI helpers, formatting, outline, diff, changelog, lint rules, code examples, exports and TypeScript generation |
 | `shared/` | Code used by both frontend and Worker: parser, validator, mock engine and API types |
-| `worker/` | HTTP router (`index.ts`), auth, documents and versions, drafts, publications, mocks, categories and preferences, search index |
+| `worker/` | HTTP router (`index.ts`), auth, documents and versions, drafts, publications, mocks, the Try it out proxy, categories and preferences, search index |
 | `public/` | HTML entry, CSS, and vendored Swagger UI and js-yaml with their licenses |
 | `db/schema.ts`, `drizzle/` | Schema and migrations |
 | `scripts/` | Build, validator precompilation, build verification and the local dev server |

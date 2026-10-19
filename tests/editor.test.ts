@@ -1,7 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import type { SpecNode } from '../shared/types.ts';
-import { convertSource, completionFor } from '../src/lib/editor.ts';
+import { convertSource, completionFor, formatSource } from '../src/lib/editor.ts';
+import { parseDefinition } from '../shared/openapi.ts';
 import { analyzeSource } from '../src/lib/analyze-source.ts';
 import { lintSpec, STYLE_RULES } from '../src/lib/lint.ts';
 import { EditorState } from '@codemirror/state';
@@ -89,4 +90,30 @@ test('disabled style rules are skipped by the analyzer', () => {
   const some = new Set(analyzeSource(source, ['operation-id']).style.map(issue => issue.rule));
   assert.ok(!some.has('operation-id') && some.has('operation-summary'));
   assert.deepEqual(analyzeSource(source, STYLE_RULES.map(rule => rule.id)).style, []);
+});
+test('formatting moves known OpenAPI keys into conventional order and keeps the API meaning', () => {
+  const source = 'paths:\n  /b:\n    get:\n      responses: { "200": { description: ok } }\n      x-internal: true\n      operationId: getB\n      summary: B\n  /a:\n    parameters: []\n    post:\n      responses: { "201": { description: created } }\ncomponents:\n  schemas:\n    Zed: { type: string }\n    Alpha: { type: string }\ninfo:\n  version: 1.0.0\n  title: Format\nopenapi: 3.0.3\nx-root: kept\n';
+  const formatted = formatSource(source, { sortPaths: false, sortSchemas: false });
+  assert.deepEqual(analyzeSource(formatted).spec, analyzeSource(source).spec);
+  assert.deepEqual(Object.keys(parseDefinition(formatted)), ['openapi', 'info', 'paths', 'components', 'x-root']);
+  assert.deepEqual(Object.keys(parseDefinition(formatted).info), ['title', 'version']);
+  assert.deepEqual(Object.keys(parseDefinition(formatted).paths['/b'].get), ['summary', 'operationId', 'responses', 'x-internal']);
+  assert.deepEqual(Object.keys(parseDefinition(formatted).paths), ['/b', '/a']);
+  const sorted = parseDefinition(formatSource(source, { sortPaths: true, sortSchemas: true }));
+  assert.deepEqual(Object.keys(sorted.paths), ['/a', '/b']);
+  assert.deepEqual(Object.keys(sorted.components.schemas), ['Alpha', 'Zed']);
+  const json = JSON.stringify({ info: { version: '1', title: 'J' }, openapi: '3.1.0', paths: {} });
+  assert.ok(formatSource(json, { sortPaths: false, sortSchemas: false }).trimStart().startsWith('{\n  "openapi"'), 'JSON input stays JSON');
+});
+test('outline lists paths, operations and schemas with their source lines, only when requested', () => {
+  const source = 'openapi: 3.0.3\ninfo:\n  title: Outline\n  version: 1.0.0\npaths:\n  /pets:\n    get:\n      summary: List pets\n      operationId: listPets\n      responses:\n        "200":\n          description: ok\ncomponents:\n  schemas:\n    Pet:\n      type: object\n';
+  assert.deepEqual(analyzeSource(source).outline, []);
+  const outline = analyzeSource(source, [], { outline: true }).outline;
+  assert.deepEqual(outline.map(item => [item.kind, item.label, item.line]), [['path', '/pets', 6], ['operation', 'GET /pets', 7], ['schema', 'Pet', 15]]);
+  assert.equal(outline[1]!.detail, 'List pets · listPets');
+  assert.deepEqual(analyzeSource('not: [valid', [], { outline: true }).outline, []);
+});
+test('outline finds keys that YAML reads as numbers', () => {
+  const source = 'swagger: "2.0"\ninfo:\n  title: N\n  version: "1"\npaths: {}\ndefinitions:\n  404:\n    type: object\n';
+  assert.deepEqual(analyzeSource(source, [], { outline: true }).outline.map(item => [item.label, item.line]), [['404', 7]]);
 });

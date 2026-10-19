@@ -1,10 +1,11 @@
 import { create } from 'zustand';
-import { convertSource } from '../lib/editor.ts';
+import { convertSource, formatSource, type FormatOptions } from '../lib/editor.ts';
 import { example } from '../example.ts';
 import { MAX_BYTES, parseDefinition, endpointCount, formatError } from '../lib/openapi.ts';
 import { ApiError } from '../lib/api.ts';
 import { currentUser, fetchMe, invalidateDocument, invalidateLibrary, invalidateSession, jsonBody, meKey, onSessionInvalidated, queryClient, request } from './query-client.ts';
 import { useCloudDraft } from './cloud-draft.ts';
+import type { OutlineItem } from '../lib/analyze-source.ts';
 import type { Diagnostic, DocumentDetail, DocumentSummary, Me, SourceType, SpecNode, VersionDetail } from '../../shared/types.ts';
 
 export interface EditorDraft { source: string; fileName: string; sourceType: SourceType }
@@ -28,6 +29,7 @@ interface WorkbenchState {
   editor: EditorDraft; savedSource: string | null; hasEdits: boolean;
   selectedId: string | null; currentVersion: number | null; draftBaseVersion: number | null; versionNote: string;
   preview: Preview | null; diagnostics: Diagnostic[]; style: Diagnostic[]; validating: boolean; styleRulesOff: string[];
+  outlineOpen: boolean; outline: OutlineItem[]; proxyTryItOut: boolean;
   // Doubles as the write lock: set() is synchronous, so a second action in the same event turn sees it.
   busy: boolean; status: string; error: string;
   initialize(): () => void;
@@ -41,6 +43,7 @@ interface WorkbenchState {
   deleteDocument(item: Pick<DocumentSummary, 'id' | 'title' | 'displayName'>): Promise<boolean | undefined> | undefined;
   signOut(): Promise<boolean | undefined>;
   convert(format: 'json' | 'yaml'): void;
+  format(options: FormatOptions): void;
   restoreDraft(draft: EditorDraft & { baseVersion: number | null }): void;
   setVersionNote(note: string): void;
   toggleStyleRule(id: string): void;
@@ -84,6 +87,7 @@ export const useWorkbench = create<WorkbenchState>()((set, get) => {
     editor: exampleDraft(), savedSource: null, hasEdits: false,
     selectedId: null, currentVersion: null, draftBaseVersion: null, versionNote: '',
     preview: previewFor(exampleDraft()), diagnostics: [], style: [], validating: false, styleRulesOff: storedOffRules(),
+    outlineOpen: false, outline: [], proxyTryItOut: false,
     busy: true, status: '已載入 3 個 API 端點', error: '',
 
     initialize() {
@@ -190,6 +194,10 @@ export const useWorkbench = create<WorkbenchState>()((set, get) => {
     },
     convert(format) {
       try { get().changeSource(convertSource(get().editor.source, format)); }
+      catch (error) { set({ error: formatError(error) }); }
+    },
+    format(options) {
+      try { get().changeSource(formatSource(get().editor.source, options)); }
       catch (error) { set({ error: formatError(error) }); }
     },
     restoreDraft(draft) {

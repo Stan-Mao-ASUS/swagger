@@ -11,22 +11,25 @@ import { useDirty, useWorkbench } from '../state/workbench.ts';
 import { useCloudDraft, useCloudDraftView } from '../state/cloud-draft.ts';
 import { useSession } from '../state/queries.ts';
 import type { Diagnostic } from '../../shared/types.ts';
+import type { OutlineKind } from '../lib/analyze-source.ts';
 
+const outlineLabels: Record<OutlineKind, string> = { path: '路徑', operation: '操作', webhook: 'Webhook', schema: 'Schema' };
 export function SourcePanel({ onLibrary }: { onLibrary: () => void }) {
   const w = useWorkbench(useShallow(state => ({
     editor: state.editor, busy: state.busy, selectedId: state.selectedId, currentVersion: state.currentVersion, draftBaseVersion: state.draftBaseVersion,
-    versionNote: state.versionNote, diagnostics: state.diagnostics, style: state.style, validating: state.validating, styleRulesOff: state.styleRulesOff, status: state.status, error: state.error,
+    versionNote: state.versionNote, diagnostics: state.diagnostics, style: state.style, outlineOpen: state.outlineOpen, outline: state.outline, validating: state.validating, styleRulesOff: state.styleRulesOff, status: state.status, error: state.error,
   })));
   const actions = useWorkbench.getState(), draftActions = useCloudDraft.getState();
   const draft = useCloudDraftView(), dirty = useDirty(), { user } = useSession();
   const fileInput = useRef<HTMLInputElement>(null), editorRef = useRef<EditorView | null>(null);
-  const [dragging, setDragging] = useState(false), [wrap, setWrap] = useState(false), [conversion, setConversion] = useState<'yaml' | 'json' | null>(null);
-  const dragDepth = useRef(0);
+  const [dragging, setDragging] = useState(false), [wrap, setWrap] = useState(false), [conversion, setConversion] = useState<'yaml' | 'json' | null>(null), [formatting, setFormatting] = useState(false), [sortPaths, setSortPaths] = useState(false), [sortSchemas, setSortSchemas] = useState(false);
+  const dragDepth = useRef(0), [outlineFilter, setOutlineFilter] = useState('');
+  const outlineItems = useMemo(() => { const needle = outlineFilter.trim().toLowerCase(); return needle ? w.outline.filter(item => (item.label + ' ' + item.detail).toLowerCase().includes(needle)) : w.outline; }, [w.outline, outlineFilter]);
   const errorCount = w.diagnostics.filter(d => d.severity !== 'warning').length;
   const marks = useMemo(() => [...w.diagnostics, ...w.style], [w.diagnostics, w.style]);
   const status = !dirty && w.status.startsWith('未儲存的變更') ? '目前內容與已儲存版本一致。' : w.status;
   const reportError = (error: Error) => actions.reportError(error.message);
-  function jump(d: Diagnostic) {
+  function jump(d: Pick<Diagnostic, 'line' | 'column'>) {
     const view = editorRef.current; if (!view) return;
     const line = view.state.doc.line(Math.min(d.line, view.state.doc.lines));
     const position = Math.min(line.to, line.from + d.column - 1);
@@ -47,7 +50,9 @@ export function SourcePanel({ onLibrary }: { onLibrary: () => void }) {
       <button title="復原（⌘ / Ctrl + Z）" disabled={w.busy} onClick={() => editorRef.current && undo(editorRef.current)}>復原</button>
       <button title="重做" disabled={w.busy} onClick={() => editorRef.current && redo(editorRef.current)}>重做</button>
       <button aria-pressed={wrap} onClick={() => setWrap(!wrap)}>換行</button>
+      <button aria-pressed={w.outlineOpen} onClick={() => useWorkbench.setState({ outlineOpen: !w.outlineOpen })}>大綱</button>
       <select aria-label="轉換格式" value="" disabled={w.busy} onChange={event => setConversion(event.target.value as 'yaml' | 'json')}><option value="" disabled>轉換格式</option><option value="yaml">YAML</option><option value="json">JSON</option></select>
+      <button disabled={w.busy} onClick={() => setFormatting(true)}>整理格式</button>
       <input id="file" ref={fileInput} type="file" accept=".yaml,.yml,.json" hidden disabled={w.busy} onChange={event => { actions.loadFile(event.target.files?.[0]); event.target.value = ''; }} />
     </div>
     <div className="draft-status" role="status">{user ? draft.status : '登入後即可自動保存雲端草稿。'}
@@ -58,6 +63,11 @@ export function SourcePanel({ onLibrary }: { onLibrary: () => void }) {
       {w.draftBaseVersion && w.draftBaseVersion !== w.currentVersion && <p>草稿基於 v{w.draftBaseVersion}，目前文件為 v{w.currentVersion}。請另存新文件以保留兩份內容。</p>}
     </div>
     <CodeEditor key={`${user?.id || 'guest'}:${w.selectedId || 'draft'}`} editorRef={editorRef} source={w.editor.source} busy={w.busy || !draft.ready} diagnostics={marks} wrap={wrap} onChange={actions.changeSource} onPaste={actions.pasteSource} onSave={() => actions.save()} />
+    {w.outlineOpen && <nav className="outline-panel" aria-label="文件大綱">
+      <input type="search" aria-label="篩選大綱" placeholder="篩選路徑、操作或 Schema" value={outlineFilter} onChange={event => setOutlineFilter(event.target.value)} />
+      {!w.outline.length && <p>{w.validating ? '正在建立大綱…' : '沒有可列出的路徑或 Schema。'}</p>}
+      <ul>{outlineItems.map((item, i) => <li key={i}><button className={'outline-item ' + item.kind} onClick={() => jump(item)}><span className="outline-kind">{outlineLabels[item.kind]}</span><span className="outline-label">{item.label}</span>{item.detail && <span className="outline-detail">{item.detail}</span>}</button></li>)}</ul>
+    </nav>}
     <div className="editor-diagnostics" aria-live="polite">
       <div className="validation-summary">{w.validating ? '檢查中…' : (errorCount ? `${errorCount} 個錯誤 · 預覽保留最後有效內容` : w.diagnostics.length ? `${w.diagnostics.length} 個提醒 · 外部定義尚未驗證` : 'OpenAPI 結構與語意檢查通過') + (w.style.length ? ` · ${w.style.length} 個風格建議` : '')}<span>{w.editor.source.split('\n').length} 行</span></div>
       <details className="style-rules"><summary>風格規則 · 已啟用 {STYLE_RULES.length - w.styleRulesOff.filter(id => STYLE_RULES.some(r => r.id === id)).length}／{STYLE_RULES.length}</summary><p>風格建議只是提醒，不會阻擋儲存或預覽。設定保存在這個瀏覽器。</p>
@@ -71,6 +81,10 @@ export function SourcePanel({ onLibrary }: { onLibrary: () => void }) {
     </div>
     <div className="editor-footnotes"><p id="editor-help">⌘ / Ctrl + Enter 儲存 · 拖入 YAML / JSON 開啟 · 最大 5 MB</p><div id="status" role="status">{status}</div>{!user && <p>登入後可保存文件；未登入的編輯不會同步至帳號。</p>}{w.error && <div id="error" className="error" role="alert">{w.error}</div>}</div>
     {dragging && <div className="editor-drop-overlay">放開以匯入文件</div>}
+    {formatting && <Modal title="整理格式" onClose={() => setFormatting(false)}><p>依 OpenAPI 慣例排列欄位順序（openapi、info、servers、tags、paths、components…；操作內 tags、summary、operationId、parameters、requestBody、responses…）。未知欄位與 x- 擴充欄位保留原順序。重新排版會移除 YAML 註解及 anchor，儲存前仍可用「復原」回到原始內容。</p>
+      <label className="mock-consent"><input type="checkbox" checked={sortPaths} onChange={event => setSortPaths(event.target.checked)} /><span>路徑依字母排序</span></label>
+      <label className="mock-consent"><input type="checkbox" checked={sortSchemas} onChange={event => setSortSchemas(event.target.checked)} /><span>Schema 依名稱排序</span></label>
+      <button className="button primary" onClick={() => { actions.format({ sortPaths, sortSchemas }); setFormatting(false); }}>整理格式</button></Modal>}
     {conversion && <Modal title="轉換文件格式" onClose={() => setConversion(null)}><p>轉為 {conversion.toUpperCase()} 會重新排版，移除 YAML 註解及 anchor。儲存前仍可用「復原」回到原始內容。</p><button className="button primary" onClick={() => { actions.convert(conversion); setConversion(null); }}>轉換為 {conversion.toUpperCase()}</button></Modal>}
   </aside>;
 }

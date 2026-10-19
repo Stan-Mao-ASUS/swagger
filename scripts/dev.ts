@@ -5,7 +5,7 @@ const vars = parseEnv(await readFile('.env', 'utf8').catch(() => ''));
 const mf = new Miniflare({
   modules: true, scriptPath: 'dist/server/index.js', compatibilityDate: '2025-09-27',
   host: '127.0.0.1', port: 4173, bindings: { ...vars, SITE_ORIGIN: 'http://localhost:4173' },
-  d1Databases: ['DB'], r2Buckets: ['BUCKET'], d1Persist: '.sites-runtime/d1', r2Persist: '.sites-runtime/r2',
+  d1Databases: ['DB'], r2Buckets: ['BUCKET'], ratelimits: { PROXY_LIMITER: { namespace_id: '1001', simple: { limit: 30, period: 60 } } }, d1Persist: '.sites-runtime/d1', r2Persist: '.sites-runtime/r2',
 });
 const db = await mf.getD1Database('DB');
 await db.prepare('CREATE TABLE IF NOT EXISTS local_migrations (name TEXT PRIMARY KEY)').run();

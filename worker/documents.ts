@@ -6,19 +6,24 @@ export { MAX_BYTES };
 export function json(body: unknown, status = 200): Response { return Response.json(body, { status, headers: { 'cache-control': 'private, no-store', 'x-content-type-options': 'nosniff' } }); }
 export class HttpError extends Error { status: number; constructor(status: number, message: string) { super(message); this.status = status; } }
 type DocumentRow = DocumentSummary & { object_key: string; deleted_at: string | null; unindexed: number; display_name: string | null; search_text: string | null };
-export async function boundedText(request: Request, limit = MAX_BYTES): Promise<string> {
-  const tooLarge = () => new HttpError(413, limit === MAX_BYTES ? '文件不能超過 5 MB。' : '設定內容過大。');
-  if (Number(request.headers.get('content-length')) > limit) throw tooLarge();
-  if (!request.body) throw new HttpError(400, '請提供 YAML / JSON 內容。');
-  const reader = request.body.getReader(); let size = 0; const chunks: Uint8Array[] = [];
+export async function readLimited(body: ReadableStream<Uint8Array>, limit: number): Promise<Uint8Array<ArrayBuffer> | null> {
+  const reader = body.getReader(); let size = 0; const chunks: Uint8Array[] = [];
   while (true) {
     const { value, done } = await reader.read(); if (done) break;
     size += value.byteLength;
-    if (size > limit) { await reader.cancel(); throw tooLarge(); }
+    if (size > limit) { await reader.cancel(); return null; }
     chunks.push(value);
   }
   const result = new Uint8Array(size); let offset = 0;
   for (const chunk of chunks) { result.set(chunk, offset); offset += chunk.length; }
+  return result;
+}
+export async function boundedText(request: Request, limit = MAX_BYTES): Promise<string> {
+  const tooLarge = () => new HttpError(413, limit === MAX_BYTES ? '文件不能超過 5 MB。' : '設定內容過大。');
+  if (Number(request.headers.get('content-length')) > limit) throw tooLarge();
+  if (!request.body) throw new HttpError(400, '請提供 YAML / JSON 內容。');
+  const result = await readLimited(request.body, limit);
+  if (!result) throw tooLarge();
   try { return new TextDecoder('utf-8', { fatal: true }).decode(result); }
   catch { throw new HttpError(400, '檔案編碼不正確，請使用 UTF-8。'); }
 }

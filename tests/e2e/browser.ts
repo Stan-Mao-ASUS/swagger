@@ -197,6 +197,37 @@ try {
   await evaluate('setInput(document.querySelector(".document-toolbar select[aria-label=\'下載目前預覽\']"), "typescript")'); await sleep(800);
   check((await readdir(downloads).catch(() => [])).some(f => f.endsWith('.d.ts')), 'export: TypeScript declarations downloaded');
 
+  await click('.editor-tools button', '大綱');
+  await until('document.querySelectorAll(".outline-item").length >= 3', 'outline built');
+  check(await evaluate('!!byText(".outline-item", "POST /orders")'), 'outline: lists operations');
+  await evaluate('setInput(document.querySelector(".outline-panel input"), "Order")'); await settle();
+  check(await evaluate('[...document.querySelectorAll(".outline-item")].every(b => b.textContent.includes("Order") || b.textContent.includes("order"))'), 'outline: filter narrows the list');
+  await click('.outline-item', 'Schema');
+  await sleep(200);
+  check(await evaluate('(() => { const v = editorView(); return v.state.doc.lineAt(v.state.selection.main.head).text.trim().startsWith("Order:"); })()'), 'outline: clicking a schema jumps to its line');
+  await click('.editor-tools button', '大綱');
+
+  await click('.document-actions button', '程式碼範例');
+  await until('!!document.querySelector(".snippet-output")', 'snippets dialog');
+  check((await text('.snippet-output')).startsWith('curl -X GET'), 'snippets: curl for the first endpoint');
+  await evaluate(`(() => { const d = document.querySelector("dialog[aria-label='程式碼範例']"); const [endpoint, language] = d.querySelectorAll("select"); setInput(endpoint, [...endpoint.options].find(o => o.value.startsWith("POST")).value); setInput(language, "python"); })()`); await settle();
+  check((await text('.snippet-output')).includes('requests.request(') && (await text('.snippet-output')).includes('"quantity"'), 'snippets: Python request with a sample body');
+  await click('dialog[aria-label="程式碼範例"] .close-button', '×'); await settle();
+
+  const beforeFormat = await evaluate<string>('editorView().state.doc.toString()');
+  await click('.editor-tools button', '整理格式');
+  await until('!!document.querySelector("dialog[aria-label=\'整理格式\']")', 'format dialog');
+  await evaluate('[...document.querySelectorAll("dialog[aria-label=\'整理格式\'] input")][1].click()'); await settle();
+  await click('dialog[aria-label="整理格式"] button.primary', '整理格式');
+  await until('document.querySelector(".draft-label")?.textContent.includes("未儲存")', 'formatted');
+  check(await evaluate('editorView().state.doc.toString().startsWith("openapi:")'), 'format: document reformatted in place');
+  await evaluate('document.querySelector(".editor-tools button[title^=\'復原\']").click()'); await settle();
+  await until('editorView().state.doc.toString() === ' + JSON.stringify(beforeFormat), 'undo restores the original text');
+  check(true, 'format: undo restores the original text');
+  await go('/?doc=' + id); await until('!!byText("button", "捨棄草稿") || !!document.querySelector("#render")', 'reopen after format');
+  if (await evaluate('!!byText("button", "捨棄草稿")')) { await click('button', '捨棄草稿'); await settle(); }
+  await ready();
+
   await click('button', '我的文件');
   await until('!!document.querySelector(".library-filters")', 'library open');
   await until('!!byText(".document-name button", "E2E Orders")', 'library lists the document');

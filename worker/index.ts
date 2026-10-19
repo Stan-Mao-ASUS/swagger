@@ -2,6 +2,7 @@ import { manageMock, serveMock } from './mocks.ts';
 import assets from '../.sites-runtime/assets.js';
 import { handleAuth, getUser, authReady, origin } from './auth.ts';
 import { manageDraft } from './drafts.ts';
+import { proxyRequest } from './proxy.ts';
 import { sharedDocuments, managePublication } from './publications.ts';
 import { librarySettings } from './library-settings.ts';
 import { documents, json, HttpError } from './documents.ts';
@@ -22,10 +23,11 @@ export default {
           return response;
         }
         if (path === '/api/shared' || path.startsWith('/api/shared/')) return await sharedDocuments(request, env);
-        if (path.startsWith('/api/drafts/') || path === '/api/preferences' || path === '/api/categories' || path.startsWith('/api/categories/') || path === '/api/documents' || path.startsWith('/api/documents/')) {
+        if (path === '/api/proxy' || path.startsWith('/api/drafts/') || path === '/api/preferences' || path === '/api/categories' || path.startsWith('/api/categories/') || path === '/api/documents' || path.startsWith('/api/documents/')) {
           const user = await getUser(request, env);
           if (!user) throw new HttpError(401, '請先使用 Google 登入。');
           if (path.startsWith('/api/drafts/')) return await manageDraft(request, env, user);
+          if (path === '/api/proxy') return await proxyRequest(request, env, user);
           const mock = path.match(/^\/api\/documents\/([a-f0-9-]{36})\/mock$/);
           if (mock) return await manageMock(request, env, user, mock[1]);
           const publication = path.match(/^\/api\/documents\/([a-f0-9-]{36})\/publication$/);

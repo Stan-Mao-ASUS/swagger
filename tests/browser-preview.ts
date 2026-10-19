@@ -4,7 +4,7 @@ import { Miniflare } from 'miniflare';
 import { testAdapter } from './helpers.ts';
 import { readdir, readFile } from 'node:fs/promises';
 const origin = 'http://localhost:4173';
-const mf = new Miniflare({ modules: true, scriptPath: 'dist/server/index.js', compatibilityDate: '2025-09-27', d1Databases: ['DB'], r2Buckets: ['BUCKET'], d1Persist: '.sites-runtime/library-qa/d1', r2Persist: '.sites-runtime/library-qa/r2', bindings: { SITE_ORIGIN: origin, AUTH_GOOGLE_ID: 'local-qa-only.apps.googleusercontent.com', AUTH_GOOGLE_SECRET: 'local-qa-only', AUTH_SECRET: 'local-qa-only-not-a-production-secret-1234567' } });
+const mf = new Miniflare({ modules: true, scriptPath: 'dist/server/index.js', compatibilityDate: '2025-09-27', d1Databases: ['DB'], r2Buckets: ['BUCKET'], ratelimits: { PROXY_LIMITER: { namespace_id: '1001', simple: { limit: 30, period: 60 } } }, d1Persist: '.sites-runtime/library-qa/d1', r2Persist: '.sites-runtime/library-qa/r2', bindings: { SITE_ORIGIN: origin, AUTH_GOOGLE_ID: 'local-qa-only.apps.googleusercontent.com', AUTH_GOOGLE_SECRET: 'local-qa-only', AUTH_SECRET: 'local-qa-only-not-a-production-secret-1234567' } });
 const db = await mf.getD1Database('DB');
 if (!(await db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='users'").first())) {
   for (const file of (await readdir('drizzle')).filter(x => x.endsWith('.sql')).sort()) await db.batch((await readFile('drizzle/' + file, 'utf8')).split('--> statement-breakpoint').map(s => s.trim()).filter(Boolean).map(s => db.prepare(s)));

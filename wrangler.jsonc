@@ -1,0 +1,27 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "swagger-yaml-workbench",
+  // scripts/build.mjs 已用 esbuild 打包好 Worker（含前端靜態檔），wrangler 不再重新打包。
+  "main": "dist/server/index.js",
+  "no_bundle": true,
+  "build": { "command": "npm run build" },
+  "compatibility_date": "2025-09-27",
+  "workers_dev": true,
+  "routes": [{ "pattern": "swagger.stanmao.com", "custom_domain": true }],
+  "vars": {
+    // 正式來源，不加路徑。換網址時要同步更新 Google OAuth 的 redirect URI。
+    "SITE_ORIGIN": "https://swagger.stanmao.com"
+  },
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "swagger-yaml-workbench",
+      // `npx wrangler d1 create swagger-yaml-workbench` 輸出的 database_id
+      "database_id": "3ad66cd7-df36-4df0-a76a-d22b26fe6dad",
+      "migrations_dir": "drizzle"
+    }
+  ],
+  "r2_buckets": [
+    { "binding": "BUCKET", "bucket_name": "swagger-yaml-workbench" }
+  ]
+}

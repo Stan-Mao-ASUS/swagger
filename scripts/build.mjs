@@ -1,5 +1,5 @@
 import { build } from 'esbuild';
-import { readdir, readFile, mkdir, rm, cp, writeFile } from 'node:fs/promises';
+import { readdir, readFile, mkdir, rm, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 await import('./compile-validators.mjs');
 const assets = {};
@@ -20,8 +20,5 @@ assets['/validation-worker.js'] = validationWorker.outputFiles[0].text;
 assets['/app.js'] = client.outputFiles.find(file => file.path.endsWith('app.js')).text;
 await writeFile('.sites-runtime/assets.js', `export default ${JSON.stringify(assets)};`);
 await rm('dist', { recursive: true, force: true });
-await mkdir('dist/.openai', { recursive: true });
 await build({ entryPoints: ['worker/index.js'], outfile: 'dist/server/index.js', bundle: true, format: 'esm', platform: 'browser', target: 'es2022', minify: true, conditions: ['worker', 'browser'], logLevel: 'info' });
-await cp('.openai/hosting.json', 'dist/.openai/hosting.json');
-await cp('drizzle', 'dist/.openai/drizzle', { recursive: true });
 await import('./verify-build.mjs');

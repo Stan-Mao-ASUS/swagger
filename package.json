@@ -7,7 +7,9 @@
     "verify:build": "node scripts/verify-build.mjs",
     "dev": "node scripts/dev.mjs",
     "test": "node --test tests/*.test.mjs",
-    "db:generate": "drizzle-kit generate"
+    "db:generate": "drizzle-kit generate",
+    "db:migrate:remote": "wrangler d1 migrations apply DB --remote",
+    "deploy": "npm run db:migrate:remote && wrangler deploy"
   },
   "dependencies": {
     "@auth/core": "^0.41.3",
@@ -31,13 +33,14 @@
     "yaml": "^2.8.1"
   },
   "devDependencies": {
+    "@seriousme/openapi-schema-validator": "^2.9.0",
+    "ajv": "^8.17.1",
+    "ajv-draft-04": "^1.0.0",
+    "ajv-formats": "^3.0.1",
     "drizzle-kit": "^0.31.4",
     "esbuild": "^0.25.10",
     "miniflare": "^4.20250927.0",
-    "@seriousme/openapi-schema-validator": "^2.9.0",
-    "ajv": "^8.17.1",
-    "ajv-formats": "^3.0.1",
-    "ajv-draft-04": "^1.0.0"
+    "wrangler": "^4.151.2"
   },
   "overrides": {
     "@auth/core": "$@auth/core",

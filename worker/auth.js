@@ -1,9 +1,8 @@
 import { Auth } from '@auth/core';
 import Google from '@auth/core/providers/google';
 import { D1Adapter } from '@auth/d1-adapter';
-export const SITE_ORIGIN = 'https://swagger-yaml-workbench-stan.tonytonitone6.chatgpt.site';
-export function origin(env) { return env.SITE_ORIGIN || SITE_ORIGIN; }
-export function authReady(env) { return !!(env.AUTH_GOOGLE_ID && env.AUTH_GOOGLE_SECRET && env.AUTH_SECRET); }
+export function origin(env) { return env.SITE_ORIGIN; }
+export function authReady(env) { return !!(env.SITE_ORIGIN && env.AUTH_GOOGLE_ID && env.AUTH_GOOGLE_SECRET && env.AUTH_SECRET); }
 function logAuthError(error, env) {
   const cause = error.cause?.err || error.cause;
   // Never log callback URLs, codes, tokens, profiles or provider response bodies.

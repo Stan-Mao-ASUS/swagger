@@ -6,7 +6,7 @@ import { D1Adapter } from '@auth/d1-adapter';
 import { mkdtemp, readdir, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-const origin = 'https://swagger-yaml-workbench-stan.tonytonitone6.chatgpt.site';
+const origin = 'https://workbench.example.test';
 const yaml = 'openapi: 3.0.3\ninfo:\n  title: Private test API\n  version: 1.0.0\npaths: {}\n';
 test('durable documents, Auth.js database sessions, ownership and CSRF', async t => {
   const dir = await mkdtemp(path.join(tmpdir(), 'yaml-workbench-test-'));

@@ -4,7 +4,7 @@ import { Miniflare, Response } from 'miniflare';
 import { readdir, readFile } from 'node:fs/promises';
 import { generateKeyPair, exportJWK, SignJWT } from 'jose';
 
-const origin = 'https://swagger-yaml-workbench-stan.tonytonitone6.chatgpt.site';
+const origin = 'https://workbench.example.test';
 const clientId = 'test-only.apps.googleusercontent.com';
 
 test('Google OAuth callback completes with a signed ID token and fails safely', async t => {

@@ -1,3 +1,4 @@
+import { typescriptDefinitions } from './typescript.js';
 const escape = value => String(value ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
 const pretty = value => escape(JSON.stringify(value, null, 2));
 const methods = /^(get|put|post|delete|options|head|patch|trace)$/;
@@ -11,16 +12,18 @@ export function offlineHtml(spec) {
 ${operations.map(({ path, method, operation, common }, i) => `<article id="endpoint-${i}"><h2><b class="method">${escape(method.toUpperCase())}</b><code>${escape(path)}</code></h2><p>${escape(operation?.summary)}</p><p>${escape(operation?.description)}</p>${common ? `<details><summary>共用參數</summary><pre>${pretty(common)}</pre></details>` : ''}<details open><summary>參數、請求與回應</summary><pre>${pretty(operation)}</pre></details></article>`).join('')}
 <details><summary>資料模型與定義</summary><pre>${pretty(spec.components || spec.definitions || {})}</pre></details><details><summary>完整 OpenAPI JSON（含所有設定與參照）</summary><pre>${pretty(spec)}</pre></details><footer>由 YAML Workbench 匯出 · 可直接在瀏覽器開啟，無須登入或連線。</footer></main></body></html>`;
 }
+const safeName = fileName => (fileName || 'api.yaml').replace(/[\\/:*?"<>|\x00-\x1f\x7f]/g, '_').slice(0, 200);
+export const baseName = fileName => safeName(fileName).replace(/\.(ya?ml|json)$/i, '') || 'api';
 export function exportFile(preview, format) {
-  const original = (preview.fileName || 'api.yaml').replace(/[\\/:*?"<>|\x00-\x1f\x7f]/g, '_').slice(0, 200);
-  const base = original.replace(/\.(ya?ml|json)$/i, '') || 'api';
+  const original = safeName(preview.fileName), base = baseName(preview.fileName);
   if (format === 'source') return { name: original, type: 'text/plain;charset=utf-8', content: preview.source };
   if (format === 'json') return { name: `${base}.json`, type: 'application/json;charset=utf-8', content: JSON.stringify(preview.spec, null, 2) + '\n' };
   if (format === 'html') return { name: `${base}.html`, type: 'text/html;charset=utf-8', content: offlineHtml(preview.spec) };
+  if (format === 'typescript') return { name: `${base}.d.ts`, type: 'text/plain;charset=utf-8', content: typescriptDefinitions(preview.spec) };
   throw new Error('不支援的匯出格式。');
 }
-export function downloadFile(preview, format) {
-  const file = exportFile(preview, format);
+export function downloadFile(preview, format) { saveFile(exportFile(preview, format)); }
+export function saveFile(file) {
   const url = URL.createObjectURL(new Blob([file.content], { type: file.type }));
   const link = document.createElement('a'); link.href = url; link.download = file.name;
   document.body.append(link); link.click(); link.remove();

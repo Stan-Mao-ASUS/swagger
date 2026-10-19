@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { convertSource, completionFor } from '../src/lib/editor.js';
 import { analyzeSource } from '../src/lib/analyze-source.js';
+import { lintSpec, STYLE_RULES } from '../src/lib/lint.js';
 import { EditorState } from '@codemirror/state';
 import { CompletionContext } from '@codemirror/autocomplete';
 const source = '# keep original\nopenapi: 3.0.3\ninfo:\n  title: Editor test\n  version: "1.0"\npaths: {}\n';
@@ -65,4 +66,26 @@ test('a large set of external-reference warnings cannot hide later semantic erro
   spec.components = { schemas: Object.fromEntries(Array.from({ length: 110 }, (_,i) => ['S'+i, { $ref: 'https://example.test/'+i }])) };
   spec.paths['/pets/{id}'].get.parameters = [];
   assert.ok(validateSpec(spec).some(d => d.severity === 'error' && d.message.includes('未宣告')));
+});
+test('style rules suggest without blocking, carry source positions and stay separate from validation', () => {
+  const source = 'openapi: 3.0.3\ninfo:\n  title: Style\n  version: 1.0.0\ntags:\n  - name: pets\npaths:\n  /Pets/:\n    get:\n      operationId: List_Pets\n      tags: [pets, unknown]\n      responses:\n        "404":\n          description: missing\n';
+  const result = analyzeSource(source);
+  assert.ok(result.spec, 'style issues never hide the preview');
+  assert.equal(result.diagnostics.length, 0);
+  const rules = new Set(result.style.map(issue => issue.rule));
+  for (const rule of ['info-description', 'operation-id-camel-case', 'operation-summary', 'tag-declared', 'success-response', 'path-kebab-case', 'path-trailing-slash']) assert.ok(rules.has(rule), rule);
+  assert.ok(!rules.has('operation-id') && !rules.has('operation-tags'));
+  assert.ok(result.style.every(issue => issue.severity === 'info' && STYLE_RULES.some(rule => rule.id === issue.rule)));
+  assert.equal(result.style.find(issue => issue.rule === 'operation-id-camel-case').line, 10);
+  assert.equal(result.style.find(issue => issue.rule === 'tag-declared').line, 11);
+  const many = { openapi: '3.0.3', info: { title: 'x', version: '1', description: 'd' }, paths: Object.fromEntries(Array.from({ length: 60 }, (_, i) => [`/p${i}`, { get: { responses: { 200: { description: 'ok' } } } }])) };
+  assert.equal(lintSpec(many).filter(issue => issue.rule === 'operation-id').length, 25);
+});
+test('disabled style rules are skipped by the analyzer', () => {
+  const source = 'openapi: 3.0.3\ninfo:\n  title: Off\n  version: 1.0.0\npaths:\n  /a:\n    get:\n      responses:\n        "200":\n          description: ok\n';
+  const all = new Set(analyzeSource(source).style.map(issue => issue.rule));
+  assert.ok(all.has('operation-id') && all.has('operation-summary'));
+  const some = new Set(analyzeSource(source, ['operation-id']).style.map(issue => issue.rule));
+  assert.ok(!some.has('operation-id') && some.has('operation-summary'));
+  assert.deepEqual(analyzeSource(source, STYLE_RULES.map(rule => rule.id)).style, []);
 });

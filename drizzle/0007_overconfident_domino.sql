@@ -1,0 +1,1 @@
+ALTER TABLE `documents` ADD `search_text` text;

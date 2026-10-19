@@ -13,8 +13,8 @@ test('additive library migration preserves existing document metadata and nullab
     await db.prepare("INSERT INTO documents (id,user_id,title,file_name,source_type,object_key,created_at,updated_at) VALUES ('legacy-doc','legacy-owner','原本的 API','original.yaml','upload','legacy-key','2026-01-01T00:00:00.000Z','2026-01-01T00:00:00.000Z')").run();
     const before = await db.prepare("SELECT * FROM documents WHERE id = 'legacy-doc'").first();
     for (const file of files.slice(1)) await apply(file);
-    const { display_name, category_id, current_version, ...after } = await db.prepare("SELECT * FROM documents WHERE id = 'legacy-doc'").first();
-    assert.deepEqual(after, before); assert.equal(current_version, 1); assert.equal(display_name, null); assert.equal(category_id, null);
+    const { display_name, category_id, current_version, search_text, ...after } = await db.prepare("SELECT * FROM documents WHERE id = 'legacy-doc'").first();
+    assert.deepEqual(after, before); assert.equal(current_version, 1); assert.equal(display_name, null); assert.equal(category_id, null); assert.equal(search_text, null);
     await db.prepare("INSERT INTO categories (id,user_id,name) VALUES ('category','legacy-owner','Legacy')").run();
     await db.prepare("UPDATE documents SET category_id = 'category' WHERE id = 'legacy-doc'").run();
     await db.prepare("DELETE FROM categories WHERE id = 'category'").run();

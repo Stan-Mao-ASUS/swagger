@@ -1,16 +1,18 @@
-import { useRef, useState } from 'react';
+import { useMemo, useRef, useState } from 'react';
 import { EditorView } from '@codemirror/view';
 import { openSearchPanel } from '@codemirror/search';
 import { undo, redo } from '@codemirror/commands';
 import { CodeEditor } from './CodeEditor.jsx';
 import { downloadFile } from '../lib/export.js';
 import { Modal } from './Modal.jsx';
+import { STYLE_RULES } from '../lib/lint.js';
 
 export function SourcePanel({ workbench: w, onLibrary }) {
   const fileInput = useRef(null), editorRef = useRef(null);
   const [dragging, setDragging] = useState(false), [wrap, setWrap] = useState(false), [conversion, setConversion] = useState(null);
   const dragDepth = useRef(0);
   const errorCount = w.diagnostics.filter(d => d.severity !== 'warning').length;
+  const marks = useMemo(() => [...w.diagnostics, ...w.style], [w.diagnostics, w.style]);
   function jump(d) {
     const view = editorRef.current; if (!view) return;
     const line = view.state.doc.line(Math.min(d.line, view.state.doc.lines));
@@ -42,10 +44,12 @@ export function SourcePanel({ workbench: w, onLibrary }) {
       {w.cloudDraft.status.startsWith('草稿未同步') && !w.cloudDraft.conflict && <button className="text-button" onClick={() => w.cloudDraft.flush().catch(error => w.reportError(error.message))}>重試保存</button>}
       {w.draftBaseVersion && w.draftBaseVersion !== w.currentVersion && <p>草稿基於 v{w.draftBaseVersion}，目前文件為 v{w.currentVersion}。請另存新文件以保留兩份內容。</p>}
     </div>
-    <CodeEditor key={`${w.session.user?.id || 'guest'}:${w.selectedId || 'draft'}`} editorRef={editorRef} source={w.editor.source} busy={w.busy || !w.cloudDraft.ready} diagnostics={w.diagnostics} wrap={wrap} onChange={w.changeSource} onPaste={w.pasteSource} onSave={() => w.save()} />
+    <CodeEditor key={`${w.session.user?.id || 'guest'}:${w.selectedId || 'draft'}`} editorRef={editorRef} source={w.editor.source} busy={w.busy || !w.cloudDraft.ready} diagnostics={marks} wrap={wrap} onChange={w.changeSource} onPaste={w.pasteSource} onSave={() => w.save()} />
     <div className="editor-diagnostics" aria-live="polite">
-      <div className="validation-summary">{w.validating ? '檢查中…' : errorCount ? `${errorCount} 個錯誤 · 預覽保留最後有效內容` : w.diagnostics.length ? `${w.diagnostics.length} 個提醒 · 外部定義尚未驗證` : 'OpenAPI 結構與語意檢查通過'}<span>{w.editor.source.split('\n').length} 行</span></div>
-      {w.diagnostics.map((d, i) => <button key={i} className={'diagnostic-item ' + (d.severity || 'error')} onClick={() => jump(d)}>第 {d.line} 行，第 {d.column} 欄：{d.message}</button>)}
+      <div className="validation-summary">{w.validating ? '檢查中…' : (errorCount ? `${errorCount} 個錯誤 · 預覽保留最後有效內容` : w.diagnostics.length ? `${w.diagnostics.length} 個提醒 · 外部定義尚未驗證` : 'OpenAPI 結構與語意檢查通過') + (w.style.length ? ` · ${w.style.length} 個風格建議` : '')}<span>{w.editor.source.split('\n').length} 行</span></div>
+      <details className="style-rules"><summary>風格規則 · 已啟用 {STYLE_RULES.length - w.styleRulesOff.filter(id => STYLE_RULES.some(r => r.id === id)).length}／{STYLE_RULES.length}</summary><p>風格建議只是提醒，不會阻擋儲存或預覽。設定保存在這個瀏覽器。</p>
+        {STYLE_RULES.map(rule => <label key={rule.id}><input type="checkbox" checked={!w.styleRulesOff.includes(rule.id)} onChange={() => w.toggleStyleRule(rule.id)} />{rule.label}</label>)}</details>
+      {marks.map((d, i) => <button key={i} className={'diagnostic-item ' + (d.severity || 'error')} onClick={() => jump(d)}>第 {d.line} 行，第 {d.column} 欄：{d.message}</button>)}
     </div>
     <div className="editor-savebar">
       {w.selectedId && w.session.user && <input aria-label="版本說明" value={w.versionNote} maxLength={200} disabled={w.busy} onChange={event => w.setVersionNote(event.target.value)} placeholder="版本說明（選填）" />}

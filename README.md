@@ -184,3 +184,12 @@ Editor controls support keyboard interaction: Cmd/Ctrl+Enter saves, Cmd/Ctrl+F s
 - Mock 優先使用 response/media example 或具名 examples，其次產生有界限的 Schema 示意資料；支援 Swagger 2 與 OpenAPI 3 的本地 JSON Pointer。`?__status=404&__example=name` 可選擇狀態與具名例子。支援 JSON、text/plain、空回應及 CORS（不允許攜帶跨站 credentials）。
 - Mock 不呼叫 upstream、不保存請求、沒有狀態性 CRUD，也不執行規格中的授權。不要傳入真實 token 或個資。外部參照、外部例子、二進位、串流不支援；Schema 產物不保證符合所有 pattern、組合、唯一性與範圍限制。回應上限 256 KB，生成深度 12、節點 1000、陣列最多 5 筆。
 - 所有 Mock 管理 API 驗證登入、文件 ownership 與 Origin；對外 Mock 只讀指定不可變版本，不提供文件、私人歷史或帳號資料 API。
+
+## 內容搜尋、風格檢查、型別匯出、變更紀錄與 Mock 驗證
+
+- 「我的文件」搜尋除名稱與檔名外，也比對目前版本的路徑、operationId、tag、Schema 名稱與摘要，並在結果顯示命中的項目。索引在儲存與還原時寫入 `documents.search_text`（migration 0007，僅新增欄位）；較早儲存的文件第一次開啟時補建索引。搜尋文字不可包含控制字元。
+- 編輯區新增風格建議（info 等級）：operationId、summary、tags、tag 宣告、成功回應、路徑命名等。風格建議不阻擋儲存或預覽，也不在 API 正式儲存時檢查。可在「風格規則」逐條關閉，設定保存在目前瀏覽器。
+- 「下載／匯出」新增 TypeScript 型別（.d.ts）：具名 Schema 轉為 `export type`，各端點的參數、Request Body 與回應整理在 `paths` 介面。format、pattern 等執行期限制不會轉換。
+- 版本比較可複製或下載 Markdown 變更紀錄，依「可能不相容／需要人工確認／一般變更」分組。分享頁只公開所選版本，因此不顯示變更紀錄。
+- Mock 依規格驗證請求：path／query／header 參數與 JSON Request Body 的型別、必填、enum、長度、範圍、額外欄位。不符合時回應 400 與 issues 清單。不檢查 format 與 pattern（避免規格中的正規表示式拖慢 Worker），請求內容上限 256 KB，只在記憶體中檢查、不保存。
+- Mock 查詢參數：`__validate=off` 關閉驗證；`__delay=毫秒`（0–5000）延遲回應；`__fail=0–1` 以機率回應錯誤，`__failStatus=400–599` 指定錯誤狀態碼（預設 500）。Mock 視窗可填寫 Query 與 Request Body，Body 會依 Schema 預填示範值。

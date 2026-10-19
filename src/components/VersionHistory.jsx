@@ -3,6 +3,8 @@ import { Modal } from './Modal.jsx';
 import { ExportMenu } from './ExportMenu.jsx';
 import { parseDefinition } from '../lib/openapi.js';
 import { buildDiffRows, summarizeSpecChanges } from '../lib/diff.js';
+import { changelogMarkdown } from '../lib/changelog.js';
+import { baseName, saveFile } from '../lib/export.js';
 const date = value => new Date(value).toLocaleString('zh-TW');
 export function VersionHistory({ workbench: w, onClose }) {
   const [versions, setVersions] = useState([]), [nextOffset, setNextOffset] = useState(null);
@@ -10,6 +12,7 @@ export function VersionHistory({ workbench: w, onClose }) {
   const [version, setVersion] = useState(null), [diff, setDiff] = useState(null);
   const [riskFilter, setRiskFilter] = useState('all');
   const [confirmRestore, setConfirmRestore] = useState(false);
+  const [notice, setNotice] = useState('');
   const [error, setError] = useState(''), [loading, setLoading] = useState(true), [loadingMore, setLoadingMore] = useState(false);
   const base = `/api/documents/${w.selectedId}/versions`;
   useEffect(() => {
@@ -21,7 +24,7 @@ export function VersionHistory({ workbench: w, onClose }) {
     return () => controller.abort();
   }, [base]);
   useEffect(() => {
-    const controller = new AbortController(); setLoading(true); setError(''); setVersion(null); setDiff(null);
+    const controller = new AbortController(); setLoading(true); setError(''); setNotice(''); setVersion(null); setDiff(null);
     Promise.all([selected, ...(compare ? [compare] : [])].map(n => w.request(`${base}/${n}`, { signal: controller.signal }))).then(([selectedVersion, older]) => {
       if (controller.signal.aborted) return;
       setVersion({ ...selectedVersion, spec: parseDefinition(selectedVersion.source) });
@@ -33,6 +36,11 @@ export function VersionHistory({ workbench: w, onClose }) {
     setLoadingMore(true);
     try { const data = await w.request(`${base}?offset=${nextOffset}`); setVersions(old => [...old, ...data.versions]); setNextOffset(data.nextOffset); }
     catch (error) { setError(error.message); } finally { setLoadingMore(false); }
+  }
+  const changelog = () => changelogMarkdown({ title: version.title, from: compare, to: selected, summary: diff.summary });
+  async function copyChangelog() {
+    try { await navigator.clipboard.writeText(changelog()); setNotice('已複製 Markdown 變更紀錄。'); }
+    catch { setError('無法存取剪貼簿，請改用下載。'); }
   }
   async function restore() {
     if (await w.restoreVersion(selected)) onClose();
@@ -54,7 +62,10 @@ export function VersionHistory({ workbench: w, onClose }) {
       {loading && <p role="status">正在讀取版本…</p>}
       {!loading && version && <><h3>{version.title} <span className="version-chip">v{selected}</span></h3>
         {diff ? <><p className="muted">− 移除　＋ 新增 · 比較 v{compare} → v{selected}</p>
-          <div className="diff-metrics"><strong>{diff.summary.changes.length} 項變更</strong><span>{diff.summary.changes.filter(c => c.risk === 'breaking').length} 項可能破壞相容性</span><span>{diff.summary.changes.filter(c => c.risk === 'review').length} 項待確認</span></div>
+          <div className="diff-metrics"><strong>{diff.summary.changes.length} 項變更</strong><span>{diff.summary.changes.filter(c => c.risk === 'breaking').length} 項可能破壞相容性</span><span>{diff.summary.changes.filter(c => c.risk === 'review').length} 項待確認</span>
+            <button className="text-button" onClick={copyChangelog}>複製 Markdown</button>
+            <button className="text-button" onClick={() => saveFile({ name: `${baseName(version.fileName)}-v${compare}-v${selected}-changelog.md`, type: 'text/markdown;charset=utf-8', content: changelog() })}>下載變更紀錄</button></div>
+          {notice && <p className="status" role="status">{notice}</p>}
           <label className="diff-filter">變更篩選<select value={riskFilter} onChange={e => setRiskFilter(e.target.value)}><option value="all">全部變更</option><option value="breaking">可能破壞相容性</option><option value="review">需要人工確認</option><option value="info">一般變更</option></select></label>
           {diff.summary.warnings.map((warning, i) => <p className="error" key={i}>{warning}</p>)}
           <ul className="diff-summary">{diff.summary.changes.filter(c => riskFilter === 'all' || c.risk === riskFilter).map((change, i) => <li key={i} className={'risk-' + change.risk}><span className="risk-badge">{change.risk === 'breaking' ? '可能不相容' : change.risk === 'review' ? '待確認' : '一般'}</span> {change.type === 'removed' ? '−' : change.type === 'added' ? '+' : '~'} {change.label}{change.detail && <small>{change.detail}</small>}</li>)}</ul>

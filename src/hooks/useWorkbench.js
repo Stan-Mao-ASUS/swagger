@@ -6,6 +6,8 @@ import { api } from '../lib/api.js';
 import { createSessionClient } from '../lib/session-client.js';
 import { MAX_BYTES, parseDefinition, endpointCount, formatError } from '../lib/openapi.js';
 
+const STYLE_STORAGE = 'workbench-style-rules-off';
+function storedOffRules() { try { const value = JSON.parse(localStorage.getItem(STYLE_STORAGE)); return Array.isArray(value) ? value.filter(id => typeof id === 'string') : []; } catch { return []; } }
 const exampleDraft = () => ({ source: example, fileName: 'petstore-example.yaml', sourceType: 'import' });
 const previewFor = draft => ({ spec: parseDefinition(draft.source), fileName: draft.fileName, source: draft.source });
 const selectUrl = id => {
@@ -20,6 +22,7 @@ export function useWorkbench() {
   const [editor, setEditor] = useState(exampleDraft);
   const [preview, setPreview] = useState(() => previewFor(exampleDraft()));
   const [diagnostics, setDiagnostics] = useState([]);
+  const [styleIssues, setStyleIssues] = useState([]), [styleRulesOff, setStyleRulesOff] = useState(storedOffRules);
   const [validating, setValidating] = useState(false);
   const [savedSource, setSavedSource] = useState(null);
   const [hasEdits, setHasEdits] = useState(false);
@@ -96,15 +99,15 @@ export function useWorkbench() {
     const id = ++validationSequence.current, worker = validatorWorker.current;
     const receive = event => {
       if (event.data.id !== id) return;
-      const result = event.data.result; setDiagnostics(result.diagnostics);
-      if (result.spec) setPreview({ spec: result.spec, source: editor.source, fileName: editor.fileName });
+      const result = event.data.result; setDiagnostics(result.diagnostics); setStyleIssues(result.style);
+      if (result.spec) setPreview(previous => previous?.source === editor.source && previous.fileName === editor.fileName ? previous : { spec: result.spec, source: editor.source, fileName: editor.fileName });
       setValidating(false);
     };
-    const failed = () => { setDiagnostics([{ line: 1, column: 1, severity: 'error', message: '驗證元件載入失敗，請重新整理。' }]); setValidating(false); };
+    const failed = () => { setStyleIssues([]); setDiagnostics([{ line: 1, column: 1, severity: 'error', message: '驗證元件載入失敗，請重新整理。' }]); setValidating(false); };
     worker.addEventListener('message', receive); worker.addEventListener('error', failed);
-    const timer = setTimeout(() => worker.postMessage({ id, source: editor.source }), 350);
+    const timer = setTimeout(() => worker.postMessage({ id, source: editor.source, styleOff: styleRulesOff }), 350);
     return () => { clearTimeout(timer); worker.removeEventListener('message', receive); worker.removeEventListener('error', failed); };
-  }, [editor]);
+  }, [editor, styleRulesOff]);
   const dirty = editor.source !== savedSource;
   const cloudDraft = useCloudDraft({ userId: session.user?.id, documentId: selectedId, initialized, editor, baseVersion: draftBaseVersion || currentVersion, changed: hasEdits, request,
     restore: draft => { setEditor({ source: draft.source, fileName: draft.fileName, sourceType: draft.sourceType }); setDraftBaseVersion(draft.baseVersion); setHasEdits(true); setStatus('已恢復草稿；儲存後才建立正式版本。'); } });
@@ -260,7 +263,16 @@ export function useWorkbench() {
     });
   }
 
+  function toggleStyleRule(id) {
+    setStyleRulesOff(previous => {
+      const next = previous.includes(id) ? previous.filter(rule => rule !== id) : [...previous, id];
+      try { localStorage.setItem(STYLE_STORAGE, JSON.stringify(next)); } catch { /* Rule choices still apply for this page when storage is disabled. */ }
+      return next;
+    });
+  }
+
   return {
+    style: styleIssues, styleRulesOff, toggleStyleRule,
     editor, preview, cloudDraft, draftBaseVersion, diagnostics, validating, dirty, convert, currentVersion, versionNote, setVersionNote, restoreVersion, session, items, nextOffset, selectedId, busy, status: !dirty && status.startsWith('未儲存的變更') ? '目前內容與已儲存版本一致。' : status, error, historyError,
     request, save, changeSource, pasteSource, importExample, loadFile, openDocument, deleteDocument, signOut,
     refreshHistory: append => session.user && run(() => fetchHistory(append)),

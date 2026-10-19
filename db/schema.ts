@@ -24,7 +24,7 @@ export const preferences = sqliteTable('preferences', {
 export const documents = sqliteTable('documents', {
   id: text('id').primaryKey(), userId: text('user_id').notNull().references(() => users.id, { onDelete: 'cascade' }),
   title: text('title').notNull(), displayName: text('display_name'), categoryId: text('category_id').references(() => categories.id, { onDelete: 'set null' }), fileName: text('file_name').notNull(), sourceType: text('source_type').notNull(),
-  currentVersion: integer('current_version').notNull().default(1), objectKey: text('object_key').notNull().unique(), createdAt: text('created_at').notNull(), updatedAt: text('updated_at').notNull(), deletedAt: text('deleted_at'),
+  currentVersion: integer('current_version').notNull().default(1), objectKey: text('object_key').notNull().unique(), createdAt: text('created_at').notNull(), updatedAt: text('updated_at').notNull(), deletedAt: text('deleted_at'), searchText: text('search_text'),
 }, table => [index('idx_documents_owner_history').on(table.userId, table.createdAt, table.id)]);
 export const documentVersions = sqliteTable('document_versions', {
   documentId: text('document_id').notNull().references(() => documents.id, { onDelete: 'cascade' }),

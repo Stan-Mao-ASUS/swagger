@@ -1,5 +1,6 @@
 import { validateSpec } from '../shared/validation.js';
 import { MAX_BYTES, parseDefinition } from '../shared/openapi.js';
+import { searchText, searchMatches } from './search.js';
 export { MAX_BYTES };
 export function json(body, status = 200) { return Response.json(body, { status, headers: { 'cache-control': 'private, no-store', 'x-content-type-options': 'nosniff' } }); }
 export class HttpError extends Error { constructor(status, message) { super(message); this.status = status; } }
@@ -20,7 +21,7 @@ export async function boundedText(request, limit = MAX_BYTES) {
   catch { throw new HttpError(400, '檔案編碼不正確，請使用 UTF-8。'); }
 }
 function validate(source) {
-  try { const spec = parseDefinition(source); const issues = validateSpec(spec).filter(issue => issue.severity === 'error'); if (issues.length) throw new Error(issues[0].path + '：' + issues[0].message); return spec.info.title; }
+  try { const spec = parseDefinition(source); const issues = validateSpec(spec).filter(issue => issue.severity === 'error'); if (issues.length) throw new Error(issues[0].path + '：' + issues[0].message); return { title: spec.info.title, search: searchText(spec) }; }
   catch (error) { throw new HttpError(400, error.mark ? 'YAML 格式錯誤，請修正後再儲存。' : error.message); }
 }
 const columns = 'id, current_version AS currentVersion, title, COALESCE(display_name, title) AS displayName, category_id AS categoryId, file_name AS fileName, source_type AS sourceType, created_at AS createdAt, updated_at AS updatedAt';
@@ -36,8 +37,8 @@ export async function documents(request, env, user) {
     if (!Number.isSafeInteger(offset) || offset < 0) throw new HttpError(400, '無效的頁碼。');
     const filters = ['user_id = ?', 'deleted_at IS NULL']; const values = [user.id];
     const query = (url.searchParams.get('q') || '').trim();
-    if (query.length > 200) throw new HttpError(400, '搜尋文字過長。');
-    if (query) { filters.push('(instr(lower(COALESCE(display_name, title)), lower(?)) > 0 OR instr(lower(file_name), lower(?)) > 0)'); values.push(query, query); }
+    if (query.length > 200 || /[\x00-\x1f]/.test(query)) throw new HttpError(400, '搜尋文字過長或包含控制字元。');
+    if (query) { filters.push('(instr(lower(COALESCE(display_name, title)), lower(?)) > 0 OR instr(lower(file_name), lower(?)) > 0 OR instr(lower(search_text), lower(?)) > 0)'); values.push(query, query, query); }
     const category = url.searchParams.get('category');
     if (category === 'uncategorized') filters.push('category_id IS NULL');
     else if (category) { filters.push('category_id = ?'); values.push(category); }
@@ -52,8 +53,9 @@ export async function documents(request, env, user) {
     const orders = { created: 'created_at DESC', updated: 'updated_at DESC', name: 'COALESCE(display_name, title) COLLATE NOCASE ASC' };
     const sort = url.searchParams.get('sort') || 'created';
     if (!Object.hasOwn(orders, sort)) throw new HttpError(400, '排序方式不正確。');
-    const { results } = await db.prepare(`SELECT ${columns} FROM documents WHERE ${filters.join(' AND ')} ORDER BY ${orders[sort]}, id DESC LIMIT 51 OFFSET ?`).bind(...values, offset).all();
-    return json({ documents: results.slice(0, 50), nextOffset: results.length > 50 ? offset + 50 : null });
+    const { results } = await db.prepare(`SELECT ${columns}${query ? ', search_text' : ''} FROM documents WHERE ${filters.join(' AND ')} ORDER BY ${orders[sort]}, id DESC LIMIT 51 OFFSET ?`).bind(...values, offset).all();
+    const documents = results.slice(0, 50).map(({ search_text, ...document }) => query ? { ...document, matches: searchMatches(search_text, query) } : document);
+    return json({ documents, nextOffset: results.length > 50 ? offset + 50 : null });
   }
   if (request.method === 'POST' && !id) {
     const sourceType = request.headers.get('x-source-type');
@@ -61,12 +63,12 @@ export async function documents(request, env, user) {
     let fileName;
     try { fileName = decodeURIComponent(request.headers.get('x-file-name') || 'document.yaml'); } catch { throw new HttpError(400, '無效的檔案名稱。'); }
     if (!fileName.trim() || fileName.length > 255 || /[\x00-\x1f]/.test(fileName)) throw new HttpError(400, '檔案名稱不正確或過長。');
-    const source = await boundedText(request); const title = validate(source);
+    const source = await boundedText(request); const { title, search } = validate(source);
     const id = crypto.randomUUID(); const key = `${encodeURIComponent(user.id)}/${id}.yaml`; const now = new Date().toISOString();
     await bucket.put(key, source, { httpMetadata: { contentType: 'text/plain; charset=utf-8' } });
     try {
       await db.batch([
-        db.prepare('INSERT INTO documents (id, user_id, title, file_name, source_type, object_key, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)').bind(id, user.id, title, fileName, sourceType, key, now, now),
+        db.prepare('INSERT INTO documents (id, user_id, title, file_name, source_type, object_key, created_at, updated_at, search_text) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)').bind(id, user.id, title, fileName, sourceType, key, now, now, search),
         db.prepare('INSERT INTO document_versions (document_id, version, title, file_name, object_key, created_at, note) VALUES (?, 1, ?, ?, ?, ?, ?)').bind(id, title, fileName, key, now, '初次匯入'),
       ]);
     } catch (error) { await bucket.delete(key).catch(() => {}); throw error; }
@@ -91,7 +93,7 @@ export async function documents(request, env, user) {
   }
   if (id && ['GET', 'DELETE'].includes(request.method)) {
     // Ownership is in the SQL query, before any R2 read or deletion.
-    const row = await db.prepare(`SELECT ${columns}, object_key, deleted_at FROM documents WHERE id = ? AND user_id = ?`).bind(id, user.id).first();
+    const row = await db.prepare(`SELECT ${columns}, object_key, deleted_at, search_text IS NULL AS unindexed FROM documents WHERE id = ? AND user_id = ?`).bind(id, user.id).first();
     if (!row || (request.method === 'GET' && row.deleted_at)) throw new HttpError(404, '找不到這份文件。');
     if (request.method === 'DELETE') {
       await db.prepare('UPDATE documents SET deleted_at = ?, updated_at = ? WHERE id = ? AND user_id = ?').bind(new Date().toISOString(), new Date().toISOString(), id, user.id).run();
@@ -103,8 +105,13 @@ export async function documents(request, env, user) {
     }
     const object = await bucket.get(row.object_key);
     if (!object) throw new HttpError(503, '文件內容暫時無法讀取，請稍後再試。');
-    const { object_key, deleted_at, ...metadata } = row;
-    return json({ document: { ...metadata, source: await object.text() } });
+    const { object_key, deleted_at, unindexed, ...metadata } = row, source = await object.text();
+    // Documents saved before content search existed are indexed the first time they are opened.
+    if (unindexed) {
+      let search = ''; try { search = searchText(parseDefinition(source)); } catch { /* Invalid legacy documents stay readable and searchable by name. */ }
+      await db.prepare('UPDATE documents SET search_text = ? WHERE id = ? AND user_id = ? AND object_key = ? AND search_text IS NULL').bind(search, id, user.id, object_key).run();
+    }
+    return json({ document: { ...metadata, source } });
   }
   return json({ error: '不支援此操作。' }, 405);
 }
@@ -169,14 +176,14 @@ async function versionRoute(request, env, user, id, action, versionPart) {
   }
   if (!Number.isSafeInteger(expectedVersion) || expectedVersion < 1) throw new HttpError(400, '請提供目前版本。');
   if (expectedVersion !== row.currentVersion) throw new HttpError(409, '文件已有新版本，請重新開啟後再儲存；編輯內容已保留。');
-  const title = validate(source), nextVersion = expectedVersion + 1, now = new Date().toISOString();
+  const { title, search } = validate(source), nextVersion = expectedVersion + 1, now = new Date().toISOString();
   // Unique immutable keys prevent losing writers from deleting or overwriting a winning blob.
   const key = `${encodeURIComponent(user.id)}/${id}/${crypto.randomUUID()}.yaml`;
   await bucket.put(key, source, { httpMetadata: { contentType: 'text/plain; charset=utf-8' } });
   try {
     const results = await db.batch([
       initialVersion(db, id, user.id),
-      db.prepare('UPDATE documents SET title = ?, file_name = ?, object_key = ?, current_version = ?, updated_at = ? WHERE id = ? AND user_id = ? AND deleted_at IS NULL AND current_version = ?').bind(title, fileName, key, nextVersion, now, id, user.id, expectedVersion),
+      db.prepare('UPDATE documents SET title = ?, file_name = ?, object_key = ?, current_version = ?, updated_at = ?, search_text = ? WHERE id = ? AND user_id = ? AND deleted_at IS NULL AND current_version = ?').bind(title, fileName, key, nextVersion, now, search, id, user.id, expectedVersion),
       db.prepare(`INSERT INTO document_versions (document_id, version, title, file_name, object_key, created_at, note)
         SELECT id, current_version, title, file_name, object_key, ?, ? FROM documents WHERE id = ? AND user_id = ? AND object_key = ? AND deleted_at IS NULL`).bind(now, note, id, user.id, key),
     ]);

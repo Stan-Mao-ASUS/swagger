@@ -282,6 +282,28 @@ test('durable documents, Auth.js database sessions, ownership and CSRF', async t
     assert.equal(retained.categoryId, null); assert.equal(retained.source, yaml); assert.equal(retained.displayName, '會員 API v2');
     assert.equal((await (await request('/api/documents', tokenA)).json()).documents.length, 3);
   });
+  await t.test('library search matches paths, operationIds, tags and schemas of the current version only for the owner', async () => {
+    const indexed = yaml.replace('paths: {}', 'tags:\n  - name: billing\npaths:\n  /invoices/{invoiceId}:\n    get:\n      operationId: getInvoiceById\n      summary: Fetch one invoice\n      tags: [billing]\n      parameters:\n        - { in: path, name: invoiceId, required: true, schema: { type: string } }\n      responses:\n        "200": { description: ok }\ncomponents:\n  schemas:\n    InvoiceLine: { type: object }');
+    const created = await request('/api/documents', tokenA, 'POST', indexed); assert.equal(created.status, 201);
+    const { document } = await created.json();
+    const search = async (q, token = tokenA) => (await (await request('/api/documents?q=' + encodeURIComponent(q), token)).json()).documents;
+    for (const [q, kind] of [['getinvoicebyid', 'operationId'], ['/invoices/{', 'path'], ['InvoiceLine', 'schema'], ['billing', 'tag'], ['one invoice', 'summary']]) {
+      const found = await search(q); assert.deepEqual(found.map(d => d.id), [document.id], q);
+      assert.ok(found[0].matches.some(m => m.kind === kind), q); assert.equal(found[0].search_text, undefined);
+    }
+    assert.deepEqual(await search('getInvoiceById', tokenB), []);
+    assert.deepEqual(await search('path'), [], 'kind markers are not searchable text');
+    assert.equal((await request('/api/documents?q=' + encodeURIComponent('a\nb'), tokenA)).status, 400);
+    const renamed = indexed.replace('getInvoiceById', 'readInvoice');
+    assert.equal((await request(`/api/documents/${document.id}/content`, tokenA, 'PUT', renamed, { 'x-expected-version': '1' })).status, 201);
+    assert.deepEqual(await search('getInvoiceById'), []);
+    assert.deepEqual((await search('readInvoice')).map(d => d.id), [document.id]);
+    await db.prepare('UPDATE documents SET search_text = NULL WHERE id = ?').bind(document.id).run();
+    assert.deepEqual(await search('readInvoice'), [], 'legacy rows are not indexed yet');
+    assert.equal((await request('/api/documents/' + document.id, tokenA)).status, 200);
+    assert.deepEqual((await search('readInvoice')).map(d => d.id), [document.id], 'opening a legacy document indexes it');
+    assert.equal((await request('/api/documents/' + document.id, tokenA, 'DELETE')).status, 200);
+  });
   await t.test('delete removes both metadata and object storage', async () => {
     const row = await db.prepare('SELECT object_key FROM documents WHERE id = ?').bind(ids[0]).first();
     const keys = (await db.prepare('SELECT object_key FROM document_versions WHERE document_id = ? UNION SELECT object_key FROM drafts WHERE document_id = ? AND object_key IS NOT NULL').bind(ids[0], ids[0]).all()).results;

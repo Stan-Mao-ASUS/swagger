@@ -1,6 +1,6 @@
-import { json, HttpError, readJson, initialVersion } from './documents.js';
+import { json, HttpError, readJson, initialVersion, boundedText } from './documents.js';
 import { parseDefinition } from '../shared/openapi.js';
-import { mockResponse } from '../shared/mock.js';
+import { mockResponse, mockControls, validateMockRequest } from '../shared/mock.js';
 const fields = 'id, version, expires_at AS expiresAt, updated_at AS updatedAt';
 export async function manageMock(request, env, user, id) {
   const db = env.DB;
@@ -21,20 +21,34 @@ export async function manageMock(request, env, user, id) {
   return json({ mock: await read() });
 }
 // Capability URL grants access only to generated responses from the explicitly selected snapshot.
-// Request payloads/cookies are never forwarded, saved, or used as identity. No upstream calls.
+// Request payloads/cookies are validated in memory only: never forwarded, saved, or used as identity. No upstream calls.
 export async function serveMock(request, env) {
   const headers = { 'access-control-allow-origin': '*', 'access-control-allow-methods': 'GET, HEAD, POST, PUT, PATCH, DELETE, OPTIONS', 'access-control-allow-headers': 'Content-Type, Authorization', 'access-control-expose-headers': 'X-Mock-Source, X-Mock-Version', 'cache-control': 'no-store', 'x-content-type-options': 'nosniff', 'content-security-policy': "default-src 'none'; sandbox", 'referrer-policy': 'no-referrer' };
-  try {
+  const respond = (status, body, extra = {}) => new Response(request.method === 'HEAD' ? null : body, { status, headers: { ...headers, 'content-type': 'application/json; charset=utf-8', ...extra } });
+  let delay = 0;
+  async function handle() {
     const url = new URL(request.url), match = url.pathname.match(/^\/mock\/([a-f0-9-]{36})(\/.*)?$/);
     if (!match) throw new HttpError(404, '找不到此 Mock。');
     const row = await env.DB.prepare(`SELECT m.version, v.object_key FROM mocks m JOIN documents d ON d.id = m.document_id AND d.deleted_at IS NULL JOIN document_versions v ON v.document_id = d.id AND v.version = m.version WHERE m.id = ? AND m.expires_at > ?`).bind(match[1], new Date().toISOString()).first();
     if (!row) throw new HttpError(404, 'Mock 不存在、已到期或已撤銷。');
     if (request.method === 'OPTIONS' && request.headers.has('access-control-request-method')) return new Response(null, { status: 204, headers });
+    const controls = mockControls(url.searchParams); delay = controls.delay;
     const object = await env.BUCKET.get(row.object_key);
     if (!object) throw new HttpError(503, 'Mock 內容暫時無法讀取。');
-    const result = mockResponse(parseDefinition(await object.text()), request.method, match[2] || '/', url.searchParams.get('__status'), url.searchParams.get('__example'));
-    return new Response(request.method === 'HEAD' ? null : result.body, { status: result.status, headers: { ...headers, 'content-type': result.contentType + '; charset=utf-8', 'x-mock-source': result.source, 'x-mock-version': String(row.version) } });
-  } catch (error) {
-    return new Response(request.method === 'HEAD' ? null : JSON.stringify({ error: error.status ? error.message : 'Mock 暫時無法使用。' }), { status: error.status || 503, headers: { ...headers, 'content-type': 'application/json; charset=utf-8' } });
+    const spec = parseDefinition(await object.text()), path = match[2] || '/', version = { 'x-mock-version': String(row.version) };
+    if (controls.validate) {
+      let body = '';
+      if (request.body && !['GET', 'HEAD'].includes(request.method)) {
+        try { body = await boundedText(request, 256 * 1024); } catch (error) { throw error.status === 413 ? new HttpError(413, 'Mock 請求內容超過 256 KB。') : error; }
+      }
+      const issues = validateMockRequest(spec, request.method, path, { query: url.searchParams, headers: request.headers, body });
+      if (issues.length) return respond(400, JSON.stringify({ error: 'Mock 請求不符合規格。', issues }), { 'x-mock-source': 'validation', ...version });
+    }
+    if (controls.failRate && Math.random() < controls.failRate) return respond(controls.failStatus, JSON.stringify({ error: 'Mock 模擬的錯誤回應。' }), { 'x-mock-source': 'fault', ...version });
+    const result = mockResponse(spec, request.method, path, controls.status, controls.example);
+    return respond(result.status, result.body, { 'content-type': result.contentType + '; charset=utf-8', 'x-mock-source': result.source, ...version });
   }
+  const response = await handle().catch(error => respond(error.status || 503, JSON.stringify({ error: error.status ? error.message : 'Mock 暫時無法使用。' })));
+  if (delay) await new Promise(resolve => setTimeout(resolve, delay));
+  return response;
 }

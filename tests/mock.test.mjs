@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mockResponse, sampleSchema } from '../shared/mock.js';
+import { mockResponse, sampleSchema, validateMockRequest, mockControls, sampleRequest } from '../shared/mock.js';
 import { summarizeSpecChanges } from '../src/lib/spec-diff.js';
 import { Miniflare } from 'miniflare';
 import { D1Adapter } from '@auth/d1-adapter';
@@ -58,6 +58,37 @@ test('semantic diff resolves inherited parameters, warns on unresolved refs and 
   const recursive = { paths: {}, components: { schemas: { A: { properties: { next: { $ref: '#/components/schemas/A' } } } } } };
   assert.deepEqual(summarizeSpecChanges(recursive, structuredClone(recursive)).changes, []);
 });
+const strict = { openapi: '3.0.3', info: { title: 'Strict', version: '1' }, paths: {
+  '/orders/{orderId}': { parameters: [{ in: 'path', name: 'orderId', required: true, schema: { type: 'integer', minimum: 1 } }], get: { parameters: [{ in: 'query', name: 'expand', schema: { type: 'array', items: { enum: ['lines', 'customer'] } } }, { in: 'header', name: 'X-Tenant', required: true, schema: { type: 'string' } }], responses: { 200: { description: 'ok', content: { 'application/json': { example: { id: 1 } } } } } } },
+  '/orders': { post: { requestBody: { required: true, content: { 'application/json': { schema: { $ref: '#/components/schemas/NewOrder' } } } }, responses: { 201: { description: 'created', content: { 'application/json': { example: { id: 2 } } } } } } },
+}, components: { schemas: { NewOrder: { type: 'object', required: ['id', 'quantity', 'kind'], additionalProperties: false, properties: { id: { type: 'integer', readOnly: true }, quantity: { type: 'integer', minimum: 1, maximum: 10 }, note: { type: 'string', maxLength: 5, nullable: true }, kind: { oneOf: [{ enum: ['retail'] }, { enum: ['wholesale'] }] } } } } } };
+const headers = value => new Headers(value);
+test('mock request validation checks parameters and JSON bodies with bounded structural rules', () => {
+  const at = issues => issues.map(issue => issue.at);
+  assert.deepEqual(validateMockRequest(strict, 'GET', '/orders/3', { query: new URLSearchParams('expand=lines,customer'), headers: headers({ 'x-tenant': 'a' }) }), []);
+  assert.deepEqual(at(validateMockRequest(strict, 'GET', '/orders/abc', { headers: headers({}) })), ['path.orderId', 'header.X-Tenant']);
+  assert.deepEqual(at(validateMockRequest(strict, 'GET', '/orders/0', { query: new URLSearchParams('expand=bogus'), headers: headers({ 'x-tenant': 'a' }) })), ['path.orderId', 'query.expand[0]']);
+  const post = (body, type = 'application/json') => validateMockRequest(strict, 'POST', '/orders', { headers: headers(type ? { 'content-type': type } : {}), body });
+  assert.deepEqual(post(JSON.stringify({ quantity: 2, kind: 'retail', note: null })), [], 'readOnly required fields are not required in requests');
+  assert.deepEqual(at(post('')), ['body']);
+  assert.match(post('{').at(0).message, /JSON/);
+  assert.match(post('<x/>', 'application/xml').at(0).message, /Content-Type/);
+  assert.deepEqual(at(post(JSON.stringify({ quantity: 11, kind: 'other', note: 'too long', extra: true }))).sort(), ['body.extra', 'body.kind', 'body.note', 'body.quantity']);
+  assert.deepEqual(at(post(JSON.stringify({ quantity: '2', kind: 'retail' }))), ['body.quantity']);
+  assert.ok(post(JSON.stringify(Array.from({ length: 50 }, () => ({}))), 'application/json').length <= 20);
+  assert.throws(() => validateMockRequest(strict, 'DELETE', '/orders'), e => e.status === 405);
+  const legacy = { swagger: '2.0', paths: { '/x': { post: { parameters: [{ in: 'body', name: 'body', required: true, schema: { type: 'object', required: ['a'], properties: { a: { type: 'string' } } } }, { in: 'query', name: 'n', type: 'integer', required: true }], responses: { 200: { description: 'ok' } } } } } };
+  assert.deepEqual(at(validateMockRequest(legacy, 'POST', '/x', { query: new URLSearchParams('n=x'), body: '{}' })), ['query.n', 'body.a']);
+});
+test('mock controls are bounded and sample requests omit readOnly fields', () => {
+  assert.deepEqual(mockControls(new URLSearchParams('')), { status: null, example: null, validate: true, delay: 0, failRate: 0, failStatus: 500 });
+  assert.deepEqual(mockControls(new URLSearchParams('__validate=off&__delay=250&__fail=0.5&__failStatus=503&__status=404')), { status: '404', example: null, validate: false, delay: 250, failRate: 0.5, failStatus: 503 });
+  for (const query of ['__delay=6000', '__delay=-1', '__fail=2', '__failStatus=200', '__failStatus=500.5', '__validate=no']) assert.throws(() => mockControls(new URLSearchParams(query)), e => e.status === 400, query);
+  const sample = sampleRequest(strict, 'post', '/orders');
+  assert.deepEqual(JSON.parse(sample.body), { quantity: 1, note: 'sampl', kind: 'retail' });
+  assert.deepEqual(validateMockRequest(strict, 'POST', '/orders', { headers: headers({ 'content-type': 'application/json' }), body: sample.body }), [], 'the prefilled body passes validation');
+  assert.equal(sampleRequest(strict, 'get', '/orders/{orderId}').path, '/orders/1');
+});
 test('mock config ownership, opt-in, immutable versions, CORS, expiry, rotation and deletion', async t => {
   const origin = 'https://swagger.stanmao.com';
   const mf = new Miniflare({ modules: true, scriptPath: 'dist/server/index.js', compatibilityDate: '2025-09-27', d1Databases: ['DB'], r2Buckets: ['BUCKET'], bindings: { SITE_ORIGIN: origin, AUTH_GOOGLE_ID: 'test.apps.googleusercontent.com', AUTH_GOOGLE_SECRET: 'test-only', AUTH_SECRET: 'test-only-secret-12345678901234567890123' } });
@@ -80,6 +111,17 @@ test('mock config ownership, opt-in, immutable versions, CORS, expiry, rotation 
   const preflight = await req(route + '/pets', null, 'OPTIONS', undefined, { origin: 'https://frontend.test', 'access-control-request-method': 'POST' }); assert.equal(preflight.status, 204);
   const post = await req(route + '/pets', null, 'POST', { name: 'not persisted' }, { origin: 'https://frontend.test' }); assert.equal(post.status, 201); assert.equal((await post.json()).name, 'Generated');
   const head = await req(route + '/pets/1', null, 'HEAD'); assert.equal(head.status, 200); assert.equal(await head.text(), '');
+  const delayed = Date.now(); const failed = await req(route + '/pets/1?__fail=1&__failStatus=503&__delay=150'); assert.equal(failed.status, 503); assert.equal(failed.headers.get('x-mock-source'), 'fault'); assert.ok(Date.now() - delayed >= 140, 'delay applies before responding');
+  assert.equal((await req(route + '/pets/1?__delay=99999')).status, 400);
+  const strictDoc = await req('/api/documents', tokens[0], 'POST', strict); assert.equal(strictDoc.status, 201); const strictId = (await strictDoc.json()).document.id;
+  const strictMock = (await (await req(`/api/documents/${strictId}/mock`, tokens[0], 'PUT', input)).json()).mock, strictRoute = '/mock/' + strictMock.id;
+  const rejected = await req(strictRoute + '/orders', null, 'POST', { quantity: 0, kind: 'retail' }, { 'content-type': 'application/json' }); assert.equal(rejected.status, 400); assert.equal(rejected.headers.get('x-mock-source'), 'validation');
+  assert.deepEqual((await rejected.json()).issues.map(i => i.at), ['body.quantity']);
+  assert.equal((await req(strictRoute + '/orders', null, 'POST', { quantity: 2, kind: 'retail' }, { 'content-type': 'application/json' })).status, 201);
+  assert.equal((await req(strictRoute + '/orders?__validate=off', null, 'POST', 'not json', { 'content-type': 'application/json' })).status, 201);
+  assert.equal((await req(strictRoute + '/orders', null, 'POST', 'x'.repeat(256 * 1024 + 1), { 'content-type': 'application/json' })).status, 413);
+  assert.equal((await req(strictRoute + '/orders/5', null, 'HEAD')).status, 400, 'HEAD is validated like GET');
+  assert.equal((await req('/api/documents/' + strictId, tokens[0], 'DELETE')).status, 200); assert.equal((await req(strictRoute + '/orders/5')).status, 404);
   const next = structuredClone(spec); next.paths['/pets/{id}'].get.responses[200].content['application/json'].examples.normal.value.name = 'Changed';
   const update = await req('/api/documents/' + id + '/content', tokens[0], 'PUT', next, { 'x-expected-version': '1' }); assert.equal(update.status, 201);
   assert.equal((await (await req(route + '/pets/1')).json()).name, 'Mochi');
@@ -92,4 +134,16 @@ test('mock config ownership, opt-in, immutable versions, CORS, expiry, rotation 
   mock = (await (await req(config, tokens[0], 'PUT', input)).json()).mock; route = '/mock/' + mock.id;
   assert.equal((await req('/api/documents/' + id, tokens[0], 'DELETE')).status, 200); assert.equal((await req(route + '/pets/1')).status, 404);
   assert.equal((await db.prepare('SELECT count(*) AS n FROM mocks').first()).n, 0);
+});
+test('mock validation accepts parameterized media keys, Swagger 2 consumes and object parameters; samples drop referenced readOnly fields', () => {
+  const charset = { openapi: '3.0.3', paths: { '/x': { post: { requestBody: { required: true, content: { 'application/json; charset=utf-8': { schema: { type: 'object', required: ['a'], properties: { a: { type: 'string' } } } } } }, responses: { 200: { description: 'ok' } } } } } };
+  assert.deepEqual(validateMockRequest(charset, 'POST', '/x', { headers: headers({ 'content-type': 'application/json' }), body: '{"a":"x"}' }), []);
+  assert.deepEqual(validateMockRequest(charset, 'POST', '/x', { headers: headers({ 'content-type': 'application/json' }), body: '{}' }).map(i => i.at), ['body.a']);
+  const xml = { swagger: '2.0', consumes: ['application/xml'], paths: { '/x': { post: { parameters: [{ in: 'body', name: 'body', required: true, schema: { type: 'object' } }], responses: { 200: { description: 'ok' } } } } } };
+  assert.deepEqual(validateMockRequest(xml, 'POST', '/x', { headers: headers({ 'content-type': 'application/xml' }), body: '<a/>' }), []);
+  assert.match(validateMockRequest(xml, 'POST', '/x', { headers: headers({ 'content-type': 'text/csv' }), body: 'a' })[0].message, /Content-Type/);
+  const deep = { openapi: '3.0.3', paths: { '/x': { get: { parameters: [{ in: 'query', name: 'filter', required: true, style: 'deepObject', schema: { type: 'object', properties: { name: { type: 'string' } } } }], responses: { 200: { description: 'ok' } } } } } };
+  assert.deepEqual(validateMockRequest(deep, 'GET', '/x', { query: new URLSearchParams('filter[name]=x') }), []);
+  const refs = { openapi: '3.0.3', paths: { '/x': { post: { requestBody: { content: { 'application/json': { schema: { type: 'object', properties: { id: { $ref: '#/components/schemas/Id' }, name: { type: 'string' } } } } } }, responses: { 200: { description: 'ok' } } } } }, components: { schemas: { Id: { type: 'integer', readOnly: true } } } };
+  assert.deepEqual(JSON.parse(sampleRequest(refs, 'post', '/x').body), { name: 'sample' });
 });

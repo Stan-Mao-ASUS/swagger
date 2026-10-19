@@ -4,6 +4,7 @@ import { Modal } from './Modal.jsx';
 import { DocumentEditDialog } from './DocumentEditDialog.jsx';
 const initialFilters = { q: '', category: '', from: '', to: '', sort: 'created' };
 const sourceLabels = { upload: '上傳', paste: '貼上', import: '匯入' };
+const matchLabels = { path: '路徑', operationId: 'operationId', tag: 'tag', schema: 'Schema', summary: '摘要' };
 const dateTime = value => new Date(value).toLocaleString('zh-TW', { year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' });
 function CategoryRow({ item, busy, onRename, onDelete }) {
   const [name, setName] = useState(item.name);
@@ -50,9 +51,9 @@ export function DocumentLibrary({ workbench: w, onClose }) {
     setOffset(0); setFilters({ ...draft }); setNotice('');
   }
   return <Modal wide title="我的文件" onClose={() => { if (!saving && !w.busy) onClose(); }}>
-    <p className="library-intro">整理名稱與分類，隨時開啟已儲存的 API 文件。</p>
+    <p className="library-intro">整理名稱與分類，隨時開啟已儲存的 API 文件。搜尋也會比對目前版本的路徑、operationId、tag、Schema 名稱與摘要；較早儲存的文件開啟一次後才納入內容搜尋。</p>
     <form className="library-filters" onSubmit={applyFilters}>
-      <label className="search-field">搜尋<input type="search" placeholder="文件名稱或原始檔名" value={draft.q} maxLength={200} onChange={event => changeFilter('q', event.target.value)} /></label>
+      <label className="search-field">搜尋<input type="search" placeholder="名稱、檔名、路徑、operationId、tag 或 Schema" value={draft.q} maxLength={200} onChange={event => changeFilter('q', event.target.value)} /></label>
       <label>分類<select value={draft.category} onChange={event => changeFilter('category', event.target.value)}><option value="">全部分類</option><option value="uncategorized">未分類</option>{categories.map(item => <option key={item.id} value={item.id}>{item.name}</option>)}</select></label>
       <label>建立日期起<input type="date" value={draft.from} onInput={event => changeFilter('from', event.target.value)} onChange={event => changeFilter('from', event.target.value)} /></label>
       <label>建立日期迄<input type="date" value={draft.to} onInput={event => changeFilter('to', event.target.value)} onChange={event => changeFilter('to', event.target.value)} /></label>
@@ -78,7 +79,7 @@ export function DocumentLibrary({ workbench: w, onClose }) {
     <div className="library-status" role="status">{loading ? '正在讀取文件…' : notice || `已顯示 ${items.length} 份文件${nextOffset !== null ? '，可載入更多' : ''}`}</div>
     {!loading && !error && items.length === 0 && <div className="library-empty">沒有符合條件的文件。<span>調整篩選，或回到編輯區上傳、貼上 YAML。</span></div>}
     {items.length > 0 && <div className="document-table"><table><thead><tr><th>文件名稱</th><th>分類</th><th>來源</th><th>建立日期</th><th>最後修改</th><th>操作</th></tr></thead><tbody>{items.map(item => <tr key={item.id}>
-      <td className="document-name" data-label="文件名稱"><button className="text-button" disabled={busy} onClick={async () => { if (await w.openDocument(item.id)) onClose(); }}>{item.displayName || item.title}</button><span>{item.fileName}</span></td>
+      <td className="document-name" data-label="文件名稱"><button className="text-button" disabled={busy} onClick={async () => { if (await w.openDocument(item.id)) onClose(); }}>{item.displayName || item.title}</button><span>{item.fileName}</span>{item.matches?.length > 0 && <span className="search-matches">{item.matches.map(m => `${matchLabels[m.kind] || m.kind} ${m.value}`).join(' · ')}</span>}</td>
       <td data-label="分類"><span className="category-chip">{categories.find(category => category.id === item.categoryId)?.name || '未分類'}</span></td>
       <td data-label="來源">{sourceLabels[item.sourceType] || item.sourceType}</td>
       <td data-label="建立日期"><time dateTime={item.createdAt}>{dateTime(item.createdAt)}</time></td>

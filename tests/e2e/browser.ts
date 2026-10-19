@@ -6,7 +6,7 @@ import path from 'node:path';
 
 const ORIGIN = 'http://localhost:4173';
 const CHROME = process.env.CHROME_PATH || '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome';
-const QA_SERVER = 'tests/browser-preview.mjs';
+const QA_SERVER = 'tests/browser-preview.ts';
 const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
 
 type CdpResponse = { id: number; result?: any; error?: { message: string } };

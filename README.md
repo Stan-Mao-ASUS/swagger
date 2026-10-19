@@ -6,9 +6,9 @@
 
 ## 技術架構
 
-前端已轉為 React 19 + JSX，使用 Hooks 管理登入狀態、編輯內容、非同步儲存與文件歷史。既有 CSS 與 Swagger UI 保留，Swagger UI 由獨立 React 元件掛載，每次切換文件都建立新實例以清除先前的 API 授權狀態。
+前端為 React 19 + TypeScript（TSX）。伺服器資料（文件、版本、分類、分享、Mock、偏好設定）由 TanStack Query 管理快取、取消與失效；編輯區、預覽、雲端草稿等用戶端狀態由 Zustand store 管理。既有 CSS 與 Swagger UI 保留，Swagger UI 由獨立 React 元件掛載，每次切換文件都建立新實例以清除先前的 API 授權狀態。
 
-後端仍是 Cloudflare Workers、Auth.js Core / Google Provider、D1（SQLite）與 R2。React 只透過原有 API 操作資料，所有 ownership、Origin、OAuth 與 session 驗證繼續由後端處理。esbuild 分別打包前端與 Worker，沒有加入 Next.js；wrangler 只負責部署與 migrations，不重新打包。
+後端仍是 Cloudflare Workers、Auth.js Core / Google Provider、D1（SQLite）與 R2。React 只透過原有 API 操作資料，所有 ownership、Origin、OAuth 與 session 驗證繼續由後端處理。前後端與測試、建置腳本全部是 strict TypeScript，共用的 API 型別在 `shared/types.ts`。esbuild 分別打包前端與 Worker，沒有加入 Next.js；Node 24 直接執行 `.ts` 測試與腳本；`tsc` 只做型別檢查（`npm run typecheck`），不輸出檔案。wrangler 只負責部署與 migrations，不重新打包。
 
 ## 新增功能
 
@@ -102,28 +102,32 @@ npm run dev
 
 ```sh
 npm run build
-npm test
+npm test            # 先執行 npm run typecheck，再跑 node --test
+npm run test:e2e    # 以 headless Chrome 操作本機 QA 頁面的回歸測試（需安裝 Chrome，可用 CHROME_PATH 指定）
 npm audit --omit=dev
 ```
 
 測試使用真正的 Auth.js D1 adapter 與持久化 Miniflare D1/R2，但直接建立測試 session；**不代表已完成 Google OAuth 實際登入**。涵蓋匿名／偽造 user id 拒絕、三種來源新增、metadata、跨帳號 list/read/delete、CSRF、無效文件／大小上限、重新啟動持久化、新 session 還原歷史、刪除資料與 R2 內容、登出撤銷 session、缺少設定時拒絕登入。
 
-`node tests/browser-preview.mjs` 提供僅限 loopback 的本機 QA。`/__qa` 可選兩個假資料帳號，驗證頁面操作。這個測試程式不會被打包／發布；正式 Worker 沒有 QA 登入入口。使用前先停止其他占用 4173 的 dev server。
+`node tests/browser-preview.ts` 提供僅限 loopback 的本機 QA。`/__qa` 可選兩個假資料帳號，驗證頁面操作。這個測試程式不會被打包／發布；正式 Worker 沒有 QA 登入入口。使用前先停止其他占用 4173 的 dev server。
 
-自動測試使用獨立測試 session。`tests/oauth.test.mjs` 另外模擬完整 Google OAuth 回呼及錯誤路徑，不能取代 Google 實際登入驗證。
+自動測試使用獨立測試 session。`tests/oauth.test.ts` 另外模擬完整 Google OAuth 回呼及錯誤路徑，不能取代 Google 實際登入驗證。
 
 ## 程式結構
 
-- `src/main.jsx`、`src/App.jsx`：React 入口與主畫面。
-- `src/components/`：登入列、YAML 編輯區、文件歷史與 Swagger 預覽元件。
-- `src/hooks/useWorkbench.js`：登入、編輯、匯入、保存、歷史開啟與刪除流程。
-- `src/lib/`：API client、YAML / OpenAPI 解析及錯誤格式。
+- `src/main.tsx`、`src/App.tsx`：React 入口與主畫面。
+- `src/components/`：登入列、YAML 編輯區、文件管理、版本、分享、Mock 與 Swagger 預覽元件。
+- `src/state/`：TanStack Query 查詢與快取（`queries.ts`、`query-client.ts`），以及 Zustand store：編輯與保存流程（`workbench.ts`）、雲端草稿（`cloud-draft.ts`）、驗證與外觀。
+- `src/lib/`：API client、YAML / OpenAPI 解析、差異、匯出及錯誤格式。
+- `shared/`：前後端共用的解析、驗證、Mock 與 API 型別（`types.ts`）。
 - `public/`：HTML 入口、原 CSS、Swagger UI vendor 與授權。`app.js` 由建置產生，不直接編輯。
-- `worker/auth.js`：Google Provider、D1 session、固定來源與身份驗證。
-- `worker/documents.js`：文件 CRUD、ownership、D1 metadata、R2 內容。
-- `worker/index.js`：HTTP 路由、Origin 驗證與公開資源。
+- `worker/auth.ts`：Google Provider、D1 session、固定來源與身份驗證。
+- `worker/documents.ts`：文件 CRUD、ownership、D1 metadata、R2 內容。
+- `worker/index.ts`：HTTP 路由、Origin 驗證與公開資源。
+- `worker-configuration.d.ts`：`npm run types` 由 `wrangler.jsonc` 產生的 Workers 執行環境與 bindings 型別。
 - `db/schema.ts`、`drizzle/`：可追蹤的 schema 及 migrations。
-- `scripts/build.mjs`：產生 Worker ESM（內含前端與 `public/`）。
+- `scripts/build.ts`：產生 Worker ESM（內含前端與 `public/`）。
+- `tsconfig.*.json`：前端（DOM）、Worker 與 Node（測試、腳本）三個型別檢查專案。
 - `wrangler.jsonc`：Worker 名稱、`SITE_ORIGIN` 與 D1 / R2 bindings。
 
 正式 migrations 由 `npm run deploy`（`wrangler d1 migrations apply DB --remote`）套用，紀錄在 D1 的 `d1_migrations` 表。不要修改已套用 migrations；schema 後續修改請新增 migration。

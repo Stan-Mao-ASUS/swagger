@@ -2,7 +2,7 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
-Swagger/OpenAPI YAML workbench: a React 19 frontend and a Cloudflare Worker backend (Auth.js Core with Google, D1, R2), deployed to `swagger.stanmao.com`. README.md is the detailed feature and API spec. It is mostly in Traditional Chinese, and so are the user-facing strings and error messages in the code.
+Swagger/OpenAPI YAML workbench: a React 19 frontend and a Cloudflare Worker backend (Auth.js Core with Google, D1, R2), deployed to `swagger.stanmao.com`. README.md (in English) is the detailed feature, security and API reference. The user-facing strings and error messages in the code are in Traditional Chinese.
 
 ## Commands
 
@@ -97,7 +97,7 @@ The tests use `node:test` and real Miniflare D1/R2 in temporary directories. `te
 - Statements are dense, often several per line, and comments are rare: they explain a constraint, never what the code does. Write new code in the same style.
 - Prefer real types over `any`. `any` is acceptable for `SpecNode` traversal and for JSON bodies inside tests.
 - Messages shown to users, including `HttpError` messages and frontend errors, are in Traditional Chinese.
-- `public/vendor/` holds the vendored Swagger UI and js-yaml builds along with their licenses. Do not edit those files. README mentions a generated `public/app.js`, but the current build never writes it to disk: `app.js` exists only as an entry in `.sites-runtime/assets.js`.
+- `public/vendor/` holds the vendored Swagger UI and js-yaml builds along with their licenses. Do not edit those files. The build never writes `app.js` to disk: it exists only as an entry in `.sites-runtime/assets.js`.
 
 ## Configuration
 

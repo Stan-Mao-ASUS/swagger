@@ -1,91 +1,97 @@
-# Swagger YAML Viewer
+# Swagger YAML Workbench
 
-部署在自己的 Cloudflare 帳號（Workers + D1 + R2），設定在 `wrangler.jsonc`。
+A browser workbench for Swagger 2.0 and OpenAPI 3.0 / 3.1 documents. You edit YAML or JSON with live validation and a Swagger UI preview. Signed-in users keep a versioned document library, publish read-only shares, and run mock APIs. It runs on your own Cloudflare account (Workers, D1 and R2), configured in `wrangler.jsonc`.
 
-沿用原站 Swagger UI、YAML / JSON 解析與版面。支援 Swagger 2.0、OpenAPI 3.0 / 3.1、5 MB 檔案、貼上、拖曳、範例匯入、Authorize 與 Try it out。
+The user interface is in Traditional Chinese.
 
-## 技術架構
+## Features
 
-前端為 React 19 + TypeScript（TSX）。伺服器資料（文件、版本、分類、分享、Mock、偏好設定）由 TanStack Query 管理快取、取消與失效；編輯區、預覽、雲端草稿等用戶端狀態由 Zustand store 管理。既有 CSS 與 Swagger UI 保留，Swagger UI 由獨立 React 元件掛載，每次切換文件都建立新實例以清除先前的 API 授權狀態。
+### Editor and preview
 
-後端仍是 Cloudflare Workers、Auth.js Core / Google Provider、D1（SQLite）與 R2。React 只透過原有 API 操作資料，所有 ownership、Origin、OAuth 與 session 驗證繼續由後端處理。前後端與測試、建置腳本全部是 strict TypeScript，共用的 API 型別在 `shared/types.ts`。esbuild 分別打包前端與 Worker，沒有加入 Next.js；Node 24 直接執行 `.ts` 測試與腳本；`tsc` 只做型別檢查（`npm run typecheck`），不輸出檔案。wrangler 只負責部署與 migrations，不重新打包。
+- CodeMirror 6 editor with line numbers, folding, YAML key suggestions, find and replace, undo and redo, line wrapping, and YAML ⇄ JSON conversion. Conversion warns that YAML comments and anchors are lost, and you can undo it.
+- Live Swagger UI preview, updated 350 ms after you stop typing. If an edit is invalid, the last valid preview stays visible and is marked as stale.
+- Open documents by upload, drag and drop, or paste, or load the built-in example. The size limit is 5 MB. **Authorize** and **Try it out** work as in Swagger UI, subject to the target server's CORS policy.
+- Keyboard: Cmd/Ctrl+Enter saves and Cmd/Ctrl+F searches. The pane separator responds to the arrow keys, Home and End. On narrow screens the panes stack, and the Edit and Preview buttons show one pane at a time.
 
-## 新增功能
+### Validation
 
-- Google 登入：Auth.js Core + Google Provider + 官方 D1 adapter，資料庫 session。
-- 使用者登入後，每次上傳、貼上有效的 YAML 或載入範例，都建立獨立紀錄。開啟文件後按儲存會新增該文件的版本，也可另存為新文件。
-- D1 保存 title、fileName、sourceType、createdAt、updatedAt 及擁有者；R2 保存原始內容。
-- 個人歷史可分頁、重新整理、重新開啟、刪除。重新開啟不會新增紀錄，編輯後儲存會新增版本。
-- 未登入可使用原有預覽；介面會明確提示未儲存。個人文件 API 拒絕匿名存取。
-- 查詢、讀取、刪除使用由伺服器驗證的 session user id；R2 存取前必須通過 D1 ownership 查詢。忽略客戶端傳入的 user id。
-- 寫入及刪除驗證 Origin，Auth.js 處理 CSRF、state、PKCE、nonce、Google 回傳身份。只允許 email_verified 的 Google 帳號。
-- 刪除先以 tombstone 隱藏紀錄，再刪 R2、D1；R2 失敗時仍不可讀取該紀錄，可重試 DELETE 完成清理。
+- The official Swagger 2.0, OpenAPI 3.0 and OpenAPI 3.1 structure schemas, plus the JSON Schema 2020-12 metaschema, are compiled at build time. Nothing runs `eval`, and no document is sent to an external validator.
+- Semantic checks cover local `$ref` targets, duplicate operation IDs, path templates and their parameters, and security scheme names.
+- Validation runs in a browser Web Worker while you edit, and again in the API on every formal save. Each issue links to its line and column. At most 100 diagnostics are shown.
+- External references, references scoped by an independent `$id`, and custom JSON Schema dialects are reported as "unverified" warnings. The workbench does not claim that their remote contents are valid.
+- YAML alias bombs are rejected: cyclic aliases are refused, and expansion depth, node count and text size are limited. Ordinary aliases and OpenAPI `$ref` still work.
+- **Style rules** add optional suggestions: operationId present and camelCase, summary, tags, declared tags, a success response, kebab-case paths, and no trailing slash. They never block saving or the preview, and the API ignores them. You can turn each rule off. That choice is stored in your browser.
 
-## 頭像、外觀與文件管理
+### Document library (signed in)
 
-右上角使用 Google 頭像，照片無法載入時顯示姓名首字。選單提供「我的文件」、淺色／深色／跟隨系統及登出。登入後的 theme 儲存於 D1 preferences；localStorage 僅快取顯示偏好，頁面啟動後以帳號設定為準。
+- Each upload, paste or example import creates a new document. Saving an open document creates a new version, and **Save as new document** creates a separate one.
+- **My documents** supports custom names, one category per document, sorting (newest, recently modified, name), creation-date ranges (local dates, end day inclusive) and pagination.
+- Search matches names, original file names, and the current version's paths, operationIds, tags, schema names and summaries. Each result shows what matched. Documents saved before content search existed are indexed the first time they are opened.
+- You can create, rename and remove categories. Removing a category moves its documents to "Uncategorized" and keeps their content.
 
-「我的文件」支援自訂名稱、單一分類、名稱／原始檔名搜尋、建立日期區間、最近新增／最近修改／名稱排序、分頁、開啟及刪除。日期區間依瀏覽器當地時間轉成 UTC，結束日包含當天。桌機表格與手機卡片共用資料。
+### Versions, comparison and export
 
-- 文件新增 nullable display_name、category_id；舊文件名稱 fallback 到 title，預設未分類，不改原 YAML、fileName 或 createdAt。
-- 分類可新增、改名、移除；移除分類將文件移至未分類並更新 updatedAt，保留 R2 內容。
-- 新 API：GET/PATCH /api/preferences、GET/POST /api/categories、PATCH/DELETE /api/categories/:id、PATCH /api/documents/:id。
-- 文件列表 API 支援 q、category、from、to、sort、offset，全部由後端依 session user id 篩選。
-- 修改文件時，SQL 同時檢查文件與分類 ownership，前端傳入的 owner 或日期欄位會被拒絕。
-- 本次 schema 使用新增的 0001 migration；0000 保持原樣。正式 Google OAuth credentials 和 redirect URI 不變。
+- Each version keeps its own content, file name, API title, timestamp and an optional note. Restoring an old version creates a new version, and nothing is overwritten.
+- Compare any two versions line by line. You also get a rule-based summary of parameter, request, response, schema, security and server changes, which you can filter by "possibly breaking", "needs review" and "other". This helps a review but does not prove compatibility. Large or complex specs show a warning, and at most 500 summary items are shown.
+- Copy or download the comparison as a Markdown changelog grouped by risk.
+- Export the current preview or any version as the original file (comments and formatting kept), as JSON, as a self-contained offline HTML page (no scripts, CDN or network requests), or as TypeScript declarations (`.d.ts`). The `.d.ts` export turns named schemas into `export type` and puts each endpoint's parameters, request body and responses in a `paths` interface. Formats, patterns and other runtime constraints are not represented.
+- Comparisons stop at 800,000 characters or 12,000 lines in total. The version viewer shows at most 500,000 characters, and downloads are always complete.
 
-20 項自動測試涵蓋原有功能、跨帳號 metadata/classification/theme、搜尋日期排序、分類移除保留內容及舊資料 migration。本機 UI 已測試頭像選單、主題切換、文件改名／分類、刷新保存、搜尋空結果與不同帳號的文件／分類隔離。
+### Sharing
 
-## Google OAuth 設定（正式登入前必做）
+- Each document is private, unlisted (anyone with the link) or public (listed in the **Shared area** at `/?view=shared`). Share links look like `/?share=<publication-id>`.
+- A share points to one immutable saved version. Later saves do not change it until you update the share. Shares can expire, and expiry is checked on every anonymous read.
+- Changing the audience, rotating the link or renewing an expired share issues a new link. Revoking a share removes access, but it cannot recall copies readers already downloaded.
+- A share exposes only that version's content, the file name, the public title and the summary. It never exposes the private document ID, category, other versions, version notes or the owner's Google profile. **Try it out** is disabled on shared pages.
 
-此專案不是 Next.js，因此直接使用 Web Request / Response 相容的 Auth.js Core，搭配 Cloudflare Worker。
+### Mock API
 
-1. 在 Google Cloud / Google Auth Platform 建立或選擇專案，設定 OAuth consent screen 的 app 名稱、聯絡 email、audience。
-2. 建立 OAuth client，Application type 選 **Web application**。
-3. Authorized redirect URI 必須完全一致：
+- Turn any saved version into a mock API at `/mock/<random-id>/<path from the spec>`, with no `servers` or `basePath` prefix. You confirm that the content may be public, and the mock expires after 1, 7 or 30 days. Mocks are managed separately from shares. Updating a mock issues a new URL, and disabling it, letting it expire or deleting the document stops it immediately.
+- Responses come from response or media examples first, then from bounded schema samples. Local JSON Pointers are supported for Swagger 2 and OpenAPI 3. Supported response types are JSON, `text/plain` and empty responses. CORS is open, but credentials are not allowed.
+- Requests are checked against the spec: path, query and header parameters, and JSON request bodies, for type, required fields, enums, lengths, ranges and unexpected properties. A request that fails returns 400 with a list of issues. `format` and `pattern` are not checked, because a regex from the spec could stall the Worker. Request bodies are limited to 256 KB, checked in memory, and never stored.
+- Query controls:
 
-   `<SITE_ORIGIN>/api/auth/callback/google`
+  | Parameter | Effect |
+  |---|---|
+  | `__status=404` | Choose the response status |
+  | `__example=name` | Choose a named example |
+  | `__validate=off` | Skip request validation |
+  | `__delay=ms` | Delay the response by 0–5000 ms |
+  | `__fail=0.2` | Return an error with this probability (0–1) |
+  | `__failStatus=503` | Status for injected errors (400–599, default 500) |
 
-4. 如 Google Console 要求 Authorized JavaScript origins，填 `<SITE_ORIGIN>`（`wrangler.jsonc` 的 `vars.SITE_ORIGIN`）。
+- Mocks never call upstream servers, store requests, keep CRUD state or enforce the spec's security. Do not send real tokens or personal data. External references and examples, binary and streaming responses are not supported. Generated samples do not guarantee every pattern, combination, uniqueness or range constraint. Responses are limited to 256 KB, with a generation depth of 12, 1,000 nodes and at most 5 array items.
 
-5. 若 OAuth app 處於 Testing，在 test users 加入兩個實測 Google 帳號。本功能只使用 `openid email profile`，不要求 Drive 或 Gmail 權限。
-6. 以 Worker secrets 設定（`npx wrangler secret put <NAME>`）：
+### Accounts and drafts
 
-   - `AUTH_GOOGLE_ID`：Google Client ID。
-   - `AUTH_GOOGLE_SECRET`：Google Client Secret。
-   - `AUTH_SECRET`：以 `openssl rand -base64 33` 產生；之後不要隨意更換，否則所有 session 失效。
+- Sign in with Google through Auth.js with database sessions. Only accounts with `email_verified` are accepted, and only the `openid email profile` scopes are requested. Without a sign-in, the editor and preview work, and the UI says that nothing is saved.
+- While you are signed in, unsaved edits autosave to a cloud draft 800 ms after you stop typing. When a draft differs from the opened version, you can restore or discard it. Drafts never become versions or shares by themselves. Revision checks reject stale writes from another tab, and the editor warns before you leave with unsynced changes.
+- The account menu shows your Google avatar, or your initial if the picture fails to load. It offers light, dark and system themes, stored with your account.
 
-   `SITE_ORIGIN` 不是 secret，寫在 `wrangler.jsonc` 的 `vars`，不加路徑。
+## Architecture
 
-7. `wrangler secret put` 會立即套用到已部署的 Worker；改 `vars` 則要重新 `npm run deploy`。
-8. Google credentials 缺少時，登入按鈕停用，API 不會降級成匿名文件儲存。
+| Layer | Technology |
+|---|---|
+| Frontend | React 19, TypeScript (TSX), CodeMirror 6, Swagger UI (vendored in `public/vendor/`) |
+| Frontend state | TanStack Query 5 for server data, Zustand 5 for editor and draft state |
+| Backend | Cloudflare Workers, Auth.js Core with the Google provider and the D1 adapter |
+| Storage | D1 (SQLite) for metadata and ownership, R2 for document content |
+| Build | esbuild bundles the frontend and the Worker. Wrangler only deploys and runs migrations |
 
-**不要將 Client Secret 貼到聊天、commit 到 Git，或放進 public/。**
+Everything is strict TypeScript. `tsc` only type-checks (`npm run typecheck`): esbuild strips types for the bundles, and Node 24 runs the tests and scripts directly from `.ts`. The API contract shared by the Worker and the frontend is in `shared/types.ts`, and the parser, validator and mock engine in `shared/` run in both places.
 
-Google 官方說明：https://developers.google.com/identity/protocols/oauth2/web-server
-Auth.js Google：https://authjs.dev/getting-started/providers/google
-Auth.js D1：https://authjs.dev/getting-started/adapters/d1
+### Security model
 
-## 部署到 Cloudflare
+- Every private API resolves the user from the server-side session and ignores any user ID the client sends. Ownership is checked in the SQL query itself, before any R2 read, write or delete.
+- Every non-GET API request must come from `SITE_ORIGIN` and must not be cross-site. Auth.js handles CSRF, state, PKCE and nonce. Callback URLs are pinned to `SITE_ORIGIN`, and forwarded host headers are ignored.
+- Versions are immutable R2 objects. Saves and restores send the expected version, and a D1 batch checks it atomically, so a concurrent write returns 409 and keeps your edit.
+- Deleting a document first hides it with a tombstone, then deletes its versions, drafts and blobs from R2, then deletes it from D1. If R2 fails, the document stays unreadable and a retried DELETE finishes the cleanup. Its shares and mocks stop working immediately.
+- Request bodies are read with streaming limits: 5 MB for documents and 16 KiB for JSON settings. Invalid UTF-8 returns 400.
+- After a sign-out or an expired session, the frontend drops all private cached data and ignores any slower response that arrives later.
 
-第一次部署：
+## Getting started
 
-```sh
-npx wrangler login
-npx wrangler d1 create swagger-yaml-workbench   # 把輸出的 database_id 填進 wrangler.jsonc
-npx wrangler r2 bucket create swagger-yaml-workbench
-# 把 wrangler.jsonc 的 SITE_ORIGIN 改成實際網址（workers.dev 子網域或自訂網域），再完成上方 Google OAuth 設定
-npx wrangler secret put AUTH_GOOGLE_ID
-npx wrangler secret put AUTH_GOOGLE_SECRET
-npx wrangler secret put AUTH_SECRET
-npm run deploy
-```
-
-之後每次部署只要 `npm run deploy`：先對正式 D1 套用尚未執行的 migrations，再由 `wrangler deploy` 執行 `npm run build` 並上傳 `dist/server/index.js`。
-
-## 本機執行
-
-Node.js 24 建議。
+Requires Node.js 24.
 
 ```sh
 npm ci
@@ -94,106 +100,109 @@ npm run build
 npm run dev
 ```
 
-開啟 http://localhost:4173 。本機登入請將 `.env` 的三個 AUTH 值補齊，Google OAuth client 另加 `http://localhost:4173/api/auth/callback/google`。本機與正式資料庫分開。
+Open http://localhost:4173. `npm run dev` runs the built Worker in Miniflare, with local D1 and R2 data in the gitignored `.sites-runtime/` folder. That data is separate from production. Rebuild and restart after code changes. A plain static file server does not work, because it has no sign-in or document API.
 
-`npm run dev` 使用 Miniflare 模擬 D1/R2，資料保存在忽略提交的 `.sites-runtime/`（目錄名沿用舊名，與 Sites 平台無關）。修改程式後重新 build、重啟 dev。請勿用 `python -m http.server`，它不提供登入或文件 API。
+To sign in locally, fill in the three `AUTH_*` values in `.env` and add `http://localhost:4173/api/auth/callback/google` to your Google OAuth client.
 
-## 測試
+For UI testing without Google, stop the dev server and run `node tests/browser-preview.ts`. It is a loopback-only QA server, and `/__qa` lets you pick one of two fake accounts. It is never bundled or deployed, and the production Worker has no QA sign-in.
+
+## Testing
 
 ```sh
 npm run build
-npm test            # 先執行 npm run typecheck，再跑 node --test
-npm run test:e2e    # 以 headless Chrome 操作本機 QA 頁面的回歸測試（需安裝 Chrome，可用 CHROME_PATH 指定）
+npm test            # npm run typecheck, then node --test
+npm run test:e2e    # headless Chrome regression run (needs Chrome; set CHROME_PATH if it is not in the default location)
 npm audit --omit=dev
 ```
 
-測試使用真正的 Auth.js D1 adapter 與持久化 Miniflare D1/R2，但直接建立測試 session；**不代表已完成 Google OAuth 實際登入**。涵蓋匿名／偽造 user id 拒絕、三種來源新增、metadata、跨帳號 list/read/delete、CSRF、無效文件／大小上限、重新啟動持久化、新 session 還原歷史、刪除資料與 R2 內容、登出撤銷 session、缺少設定時拒絕登入。
+- Unit and integration tests use the real Auth.js D1 adapter and Miniflare D1/R2, with sessions created directly. They cover anonymous and spoofed identities, cross-account isolation, CSRF, size limits, versions and conflicts, sharing, drafts, mocks, migrations and persistence across restarts.
+- `tests/oauth.test.ts` simulates the full Google OAuth callback and its error paths with a locally signed ID token. Passing it does not prove that a real Google sign-in works.
+- `tests/e2e/browser.ts` drives the UI through Chrome DevTools: paste, typing, draft autosave and recovery, save, a version conflict, restore, library management, sharing, theme, mocks, session expiry, account isolation and sign-out.
 
-`node tests/browser-preview.ts` 提供僅限 loopback 的本機 QA。`/__qa` 可選兩個假資料帳號，驗證頁面操作。這個測試程式不會被打包／發布；正式 Worker 沒有 QA 登入入口。使用前先停止其他占用 4173 的 dev server。
+## Deployment
 
-自動測試使用獨立測試 session。`tests/oauth.test.ts` 另外模擬完整 Google OAuth 回呼及錯誤路徑，不能取代 Google 實際登入驗證。
+### Google OAuth setup
 
-## 程式結構
+1. In Google Cloud (Google Auth Platform), create or choose a project and configure the OAuth consent screen: app name, contact email and audience.
+2. Create an OAuth client with the **Web application** type.
+3. Set the authorized redirect URI to exactly `<SITE_ORIGIN>/api/auth/callback/google`. If the console asks for authorized JavaScript origins, use `<SITE_ORIGIN>`.
+4. If the app is in Testing mode, add your test accounts as test users.
+5. Store the credentials as Worker secrets (`npx wrangler secret put <NAME>`):
+   - `AUTH_GOOGLE_ID`: the client ID.
+   - `AUTH_GOOGLE_SECRET`: the client secret.
+   - `AUTH_SECRET`: generate it with `openssl rand -base64 33`. Changing it later signs everyone out.
 
-- `src/main.tsx`、`src/App.tsx`：React 入口與主畫面。
-- `src/components/`：登入列、YAML 編輯區、文件管理、版本、分享、Mock 與 Swagger 預覽元件。
-- `src/state/`：TanStack Query 查詢與快取（`queries.ts`、`query-client.ts`），以及 Zustand store：編輯與保存流程（`workbench.ts`）、雲端草稿（`cloud-draft.ts`）、驗證與外觀。
-- `src/lib/`：API client、YAML / OpenAPI 解析、差異、匯出及錯誤格式。
-- `shared/`：前後端共用的解析、驗證、Mock 與 API 型別（`types.ts`）。
-- `public/`：HTML 入口、原 CSS、Swagger UI vendor 與授權。`app.js` 由建置產生，不直接編輯。
-- `worker/auth.ts`：Google Provider、D1 session、固定來源與身份驗證。
-- `worker/documents.ts`：文件 CRUD、ownership、D1 metadata、R2 內容。
-- `worker/index.ts`：HTTP 路由、Origin 驗證與公開資源。
-- `worker-configuration.d.ts`：`npm run types` 由 `wrangler.jsonc` 產生的 Workers 執行環境與 bindings 型別。
-- `db/schema.ts`、`drizzle/`：可追蹤的 schema 及 migrations。
-- `scripts/build.ts`：產生 Worker ESM（內含前端與 `public/`）。
-- `tsconfig.*.json`：前端（DOM）、Worker 與 Node（測試、腳本）三個型別檢查專案。
-- `wrangler.jsonc`：Worker 名稱、`SITE_ORIGIN` 與 D1 / R2 bindings。
+`SITE_ORIGIN` is not a secret. It is set in `wrangler.jsonc` under `vars`, without a path. Secrets apply to the deployed Worker immediately, but changes to `vars` need `npm run deploy`. If any Google credential is missing, the sign-in button is disabled and the API does not fall back to anonymous storage.
 
-正式 migrations 由 `npm run deploy`（`wrangler d1 migrations apply DB --remote`）套用，紀錄在 D1 的 `d1_migrations` 表。不要修改已套用 migrations；schema 後續修改請新增 migration。
+Never paste the client secret into chat, commit it, or put it in `public/`.
 
-外部 $ref 與 Try it out 會連至文件指定網址，仍受 CORS 限制。Google 登入只識別使用者，不會替你授權文件中的第三方 API。
+References: [Google OAuth for web servers](https://developers.google.com/identity/protocols/oauth2/web-server), [Auth.js Google provider](https://authjs.dev/getting-started/providers/google), [Auth.js D1 adapter](https://authjs.dev/getting-started/adapters/d1).
 
-## 2026-10-04 Code review 修正
+### First deployment
 
-- 共用 `shared/openapi.js`，前端預覽與後端保存使用同一組檢查；拒絕循環 YAML alias，限制展開深度、節點及文字量，正常 alias 與 OpenAPI `$ref` 保留。
-- 只修改分類時不重送未變更的名稱，避免原 API title 長於 200 字而無法分類。
-- 驗證實際存在的日期和日期範圍；日期轉換例外進入錯誤提示，避免視窗崩潰。
-- 無效 UTF-8 回傳 400；設定 API 在串流讀取時套用 16 KiB 上限。
-- 所有 workbench 請求共用 session 失效邊界，登入過期或登出後忽略之前較慢回來的私人資料。
-- 27 項自動測試通過；正式依賴 `npm audit --omit=dev` 為 0 個已知漏洞。本次未變更資料庫 schema 或 Google OAuth 設定。
+```sh
+npx wrangler login
+npx wrangler d1 create swagger-yaml-workbench   # put the printed database_id in wrangler.jsonc
+npx wrangler r2 bucket create swagger-yaml-workbench
+# set SITE_ORIGIN in wrangler.jsonc to your workers.dev or custom domain, then complete the Google OAuth setup
+npx wrangler secret put AUTH_GOOGLE_ID
+npx wrangler secret put AUTH_GOOGLE_SECRET
+npx wrangler secret put AUTH_SECRET
+npm run deploy
+```
 
-## 版本歷史與匯出
+### Later deployments
 
-- 開啟文件後「儲存新版本」會保留原始內容、檔名、API 標題、時間及選填說明。「另存為新文件」仍建立獨立紀錄；貼上、上傳、範例匯入維持新增文件。
-- 預覽上方「版本歷史」可分頁讀取、檢視、選擇任意兩版逐行比較，以及將舊版還原為新版本。摘要只比較端點/API 版本，不能當成完整破壞性變更檢查。
-- 版本為 D1 metadata + 不可變的獨立 R2 object。舊文件第一次使用版本功能時，保留其原 object 作為 v1；migration 僅新增 schema，不改寫既有文件。
-- 儲存與還原須提供目前版本，D1 原子批次檢查版本號。競爭寫入回傳 409，保留編輯內容。刪除文件會刪除全部歷史版本與 blobs。
-- API：GET /api/documents/:id/versions?offset=0、GET /api/documents/:id/versions/:version、PUT /api/documents/:id/content（x-expected-version、選填 x-version-note）、POST /api/documents/:id/restore（version、expectedVersion）。全部依登入 session 檢查 ownership，寫入驗證 Origin。
-- 「下載／匯出」匯出目前已呈現的預覽；未套用的編輯不包含在內。版本視窗可下載所選歷史版本。原始檔逐字保留註解與格式；JSON 由解析後定義產生；HTML 為自包含唯讀文件，含端點、模型與完整 JSON，沒有遠端 scripts、CDN、網路請求或 API 執行功能。外部 refs 保留文字，未下載內容。
-- 大於合計 800,000 字元或 12,000 行、超過差異計算上限的比較會提示下載後本機比較。版本原始內容畫面最多顯示 500,000 字元，下載保留完整檔案。
-- 新增 0002 migration；既有 migrations 不變。測試涵蓋舊文件初始版本、並行寫入、還原、跨帳號版本拒絕、重啟保存、完整刪除及匯出注入防護。
+Run `npm run deploy`. It applies pending D1 migrations to production, then `wrangler deploy` runs `npm run build` and uploads `dist/server/index.js` unchanged.
 
-## 分享區
+### Migrations
 
-- 導覽列「分享區」讓所有訪客搜尋及唯讀瀏覽明確發布的文件。獨立網址使用 `/?share=<publication-id>`；分享區使用 `/?view=shared`。未發布文件保持私人。
-- 擁有者開啟自己的文件後，按「發布到分享區」，選擇已儲存版本、公開標題及選填說明，確認完整內容後發布。公開資料包含所選版本的原始 YAML/JSON 和檔名；不包含私人文件 ID、分類、其他版本、版本備註或 Google 個人資料。
-- 公開內容固定指向不可變版本。後續儲存、還原或修改私人名稱不會自動改動公開資料；再次按「更新分享內容」才會更新，連結保持相同。
-- 撤下會使原連結失效；重新發布會建立新連結。删除或 tombstone 文件時，分享立即無法讀取，正常刪除完成後 publication metadata 一併移除。撤下不能收回讀者已儲存的副本。
-- GET `/api/shared`（q、offset）、GET `/api/shared/:publicationId` 可匿名讀取，回應明確列出公開欄位且 no-store。分享頁停用 API Try it out，提供既有三種匯出格式。
-- GET/PUT/DELETE `/api/documents/:id/publication` 必須通過 session ownership；PUT 要求 version、title、選填 summary 及 confirmPublic=true。新增/更新 SQL 本身再次驗證該版本與文件 ownership、未刪除狀態；所有寫入保留 Origin 檢查。既有私人文件與版本 API 維持 owner-only。
-- 0003 migration 僅新增 publications 表與索引，不會將既有文件公開。33 項自動測試涵蓋主動發布、指定版本、私人資料拒絕、撤下、重新發布、重啟保存與文件刪除連動。
+To change the schema, edit `db/schema.ts`, run `npm run db:generate`, and commit the new file in `drizzle/`. Never edit a migration that has already been applied, and keep migrations additive. Production records applied migrations in D1's `d1_migrations` table. After changing `wrangler.jsonc`, run `npm run types` to regenerate `worker-configuration.d.ts`.
 
-## Editor workspace
+## API reference
 
-The workspace now uses CodeMirror 6 for YAML/JSON editing and the existing Swagger UI renderer for a debounced (350 ms) live preview. It includes line numbers, folding, key suggestions for YAML, find/replace, undo/redo, wrapping, resizable panes, and YAML/JSON conversion. Conversion prompts before discarding comments and can be undone.
+All private endpoints require a session cookie. All writes require a same-site `Origin`. Responses are `private, no-store`.
 
-Validation runs official OpenAPI structure schemas plus semantic checks in a browser Worker and on formal saves in the API, with clickable YAML/JSON source locations. Invalid edits retain the last valid preview, marked as stale. Private cloud saves remain explicit versions; valid paste/import/upload creates a new document as before. Publishing continues to select an immutable saved version. No auth configuration or external code-generation service is required.
+| Method and path | Purpose |
+|---|---|
+| `GET /api/me` | Current user and whether Google sign-in is configured |
+| `/api/auth/*` | Auth.js sign-in, callback, session, CSRF and sign-out |
+| `GET /api/documents` | List documents. Query: `q`, `category` (id or `uncategorized`), `from`, `to` (ISO timestamps), `sort` (`created`, `updated`, `name`), `offset` |
+| `POST /api/documents` | Create a document. The body is the YAML/JSON text, with headers `x-source-type` (`upload`, `paste`, `import`) and `x-file-name` |
+| `GET` / `DELETE /api/documents/:id` | Read the current content, or delete the document and everything attached to it |
+| `PATCH /api/documents/:id` | Set `displayName` and/or `categoryId` |
+| `GET /api/documents/:id/versions` | List versions (`offset`) |
+| `GET /api/documents/:id/versions/:version` | Read one version |
+| `PUT /api/documents/:id/content` | Save a new version. Headers: `x-expected-version` and an optional `x-version-note` |
+| `POST /api/documents/:id/restore` | Restore `{ version, expectedVersion }` as a new version |
+| `GET` / `PUT` / `DELETE /api/documents/:id/publication` | Read, publish or update (`version`, `title`, `summary`, `visibility`, `expiresAt`, `rotateLink`, `confirmPublic: true`), or revoke a share |
+| `GET` / `PUT` / `DELETE /api/documents/:id/mock` | Read, enable (`version`, `expiresInDays`: 1, 7 or 30, `confirmPublic: true`) or disable the mock |
+| `GET` / `PUT` / `DELETE /api/drafts/:id` | The cloud draft for a document, or `new` for an unsaved one. Writes send `x-draft-revision` |
+| `GET` / `PATCH /api/preferences` | The theme preference |
+| `GET` / `POST /api/categories`, `PATCH` / `DELETE /api/categories/:id` | Manage categories |
+| `GET /api/shared` | Public shares (`q`, `offset`). No sign-in required |
+| `GET /api/shared/:publicationId` | One public or unlisted share. No sign-in required |
+| `ANY /mock/:mockId/<path>` | A mock response. No sign-in required |
 
-Editor controls support keyboard interaction: Cmd/Ctrl+Enter saves, Cmd/Ctrl+F searches, and the focused pane separator responds to arrow keys, Home and End. On narrow screens the split layout stacks; Edit and Preview controls can show one pane at a time.
+## Project structure
 
+| Path | Contents |
+|---|---|
+| `src/main.tsx`, `src/App.tsx` | React entry point and app shell |
+| `src/components/` | Account bar, editor, preview, library, version history, share and mock dialogs |
+| `src/state/` | TanStack Query client and query hooks (`query-client.ts`, `queries.ts`), plus Zustand stores for the editor (`workbench.ts`) and cloud drafts (`cloud-draft.ts`), validation and theme |
+| `src/lib/` | API client, session client, OpenAPI helpers, diff, changelog, lint rules, exports and TypeScript generation |
+| `shared/` | Code used by both frontend and Worker: parser, validator, mock engine and API types |
+| `worker/` | HTTP router (`index.ts`), auth, documents and versions, drafts, publications, mocks, categories and preferences, search index |
+| `public/` | HTML entry, CSS, and vendored Swagger UI and js-yaml with their licenses |
+| `db/schema.ts`, `drizzle/` | Schema and migrations |
+| `scripts/` | Build, validator precompilation, build verification and the local dev server |
+| `tests/` | Unit, integration and OAuth tests, the QA server and the end-to-end browser run |
+| `tsconfig.*.json` | Type-check projects for the app (DOM), the Worker and Node |
+| `worker-configuration.d.ts` | Workers runtime and binding types generated by `npm run types` |
+| `wrangler.jsonc` | Worker name, `SITE_ORIGIN`, routes and D1 / R2 bindings |
 
-## Sharing permissions, cloud drafts and validation (v12)
+## Limitations
 
-- Share dialog offers private, unlisted (anyone with the link), and public gallery visibility. Expiry is checked in server SQL on every anonymous read/list. Audience changes, manual rotation, and renewing an expired publication replace its random link ID. Revocation removes access. Previously downloaded copies cannot be recalled. Migration 0004 preserves existing publications as public with no expiry; private documents remain private.
-- Migration 0005 adds account-owned draft metadata in D1; unfinished source is stored in R2. Authenticated editing autosaves after 800 ms. Restore/discard choices appear when a cloud draft differs from the opened saved version. Formal saves remain explicit; drafts never become public. Revision checks reject stale writes/deletes, and a tombstone revision prevents a stale tab from recreating a discarded draft. Document deletion removes its draft and source. Guest edits are not cloud-saved. Network failures are shown with retry/download options; wait for the saved status before closing. The editor warns before leaving with unsynced content.
-- Trusted Swagger 2.0 / OpenAPI 3.0 / 3.1 structure schemas and the JSON Schema 2020-12 metaschema are precompiled at build time. No runtime eval or document upload to an external validator occurs. Schema checks are supplemented by internal reference, operation ID, path-template/parameter and security-scheme checks. Browser validation runs in a dedicated Worker. Both API formal writes and the editor reject errors; drafts accept incomplete text.
-- External references, references scoped by independent `$id`, and custom JSON Schema dialects are explicitly marked unverified warnings. No claim is made that their remote contents or examples match their schemas. Invalid legacy documents remain readable. Only the first 100 validation diagnostics are displayed.
-- New development checkouts must run `npm ci` then `npm run build` before `npm test`; the build generates the ignored standalone validators. Existing applied migration files are unchanged.
-
-### 版本比較與 Mock API
-
-- 版本歷史的比較基準提供參數、Request／Response、Schema、授權與伺服器變動摘要，可篩選可能不相容、待確認、一般變更。這是規則式輔助審查，並非完整相容性證明；外部參照／複雜規格會警示，最多顯示 500 項摘要，逐行比較仍保留。
-- 文件預覽的「Mock API」可選擇已儲存版本，確認回應資料可分享後啟用，期限為 1／7／30 天。URL 為 `/mock/<隨機識別碼>` 加 OpenAPI paths 中的路徑，不需 servers/basePath 前綴。Mock 不列入分享區；持有 URL 的人皆可使用，與文件分享的撤銷分開管理。更新會換發 URL；停用、到期、刪除文件立即失效。
-- Mock 優先使用 response/media example 或具名 examples，其次產生有界限的 Schema 示意資料；支援 Swagger 2 與 OpenAPI 3 的本地 JSON Pointer。`?__status=404&__example=name` 可選擇狀態與具名例子。支援 JSON、text/plain、空回應及 CORS（不允許攜帶跨站 credentials）。
-- Mock 不呼叫 upstream、不保存請求、沒有狀態性 CRUD，也不執行規格中的授權。不要傳入真實 token 或個資。外部參照、外部例子、二進位、串流不支援；Schema 產物不保證符合所有 pattern、組合、唯一性與範圍限制。回應上限 256 KB，生成深度 12、節點 1000、陣列最多 5 筆。
-- 所有 Mock 管理 API 驗證登入、文件 ownership 與 Origin；對外 Mock 只讀指定不可變版本，不提供文件、私人歷史或帳號資料 API。
-
-## 內容搜尋、風格檢查、型別匯出、變更紀錄與 Mock 驗證
-
-- 「我的文件」搜尋除名稱與檔名外，也比對目前版本的路徑、operationId、tag、Schema 名稱與摘要，並在結果顯示命中的項目。索引在儲存與還原時寫入 `documents.search_text`（migration 0007，僅新增欄位）；較早儲存的文件第一次開啟時補建索引。搜尋文字不可包含控制字元。
-- 編輯區新增風格建議（info 等級）：operationId、summary、tags、tag 宣告、成功回應、路徑命名等。風格建議不阻擋儲存或預覽，也不在 API 正式儲存時檢查。可在「風格規則」逐條關閉，設定保存在目前瀏覽器。
-- 「下載／匯出」新增 TypeScript 型別（.d.ts）：具名 Schema 轉為 `export type`，各端點的參數、Request Body 與回應整理在 `paths` 介面。format、pattern 等執行期限制不會轉換。
-- 版本比較可複製或下載 Markdown 變更紀錄，依「可能不相容／需要人工確認／一般變更」分組。分享頁只公開所選版本，因此不顯示變更紀錄。
-- Mock 依規格驗證請求：path／query／header 參數與 JSON Request Body 的型別、必填、enum、長度、範圍、額外欄位。不符合時回應 400 與 issues 清單。不檢查 format 與 pattern（避免規格中的正規表示式拖慢 Worker），請求內容上限 256 KB，只在記憶體中檢查、不保存。
-- Mock 查詢參數：`__validate=off` 關閉驗證；`__delay=毫秒`（0–5000）延遲回應；`__fail=0–1` 以機率回應錯誤，`__failStatus=400–599` 指定錯誤狀態碼（預設 500）。Mock 視窗可填寫 Query 與 Request Body，Body 會依 Schema 預填示範值。
+- External `$ref` targets and **Try it out** requests go to the URLs in the document and are subject to CORS. Google sign-in only identifies you. It does not authorize the third-party APIs described in your documents.
+- The breaking-change summary and generated types are aids, not guarantees. Review the raw diff and the spec itself.
